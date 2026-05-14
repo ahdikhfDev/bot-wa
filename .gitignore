@@ -1,0 +1,30 @@
+# Sessions
+auth_info_baileys/
+auth_info/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Database
+*.sqlite
+*.db
+
+# Environment
+.env
+.env.local
+
+# Dependency
+node_modules/
+
+# Temp files
+temp_*.ogg
+temp_*.mp3
+temp_*.webp
+temp_*.jpg
+temp_*.png
+
+# Misc
+.DS_Store
+.vscode/
