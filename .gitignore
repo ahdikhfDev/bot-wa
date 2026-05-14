@@ -1,3 +1,5 @@
-node_modules
-.DS_Store
-*.log
+node_modules/
+auth_session/
+auth_session_link/
+logs/
+*.tar.gz

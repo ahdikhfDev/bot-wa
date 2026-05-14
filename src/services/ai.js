@@ -6,7 +6,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import os from 'os';
 import { PassThrough } from 'stream';
-import { addReminder } from './db.js';
+import { addReminder, getMemories, searchMemoriesRAG, searchMemories, addMemory } from './db.js';
 
 // Use system ffmpeg on Linux (STB) for better compatibility, static on Windows
 const actualFfmpegPath = os.platform() === 'win32' ? ffmpegPath : 'ffmpeg';
@@ -35,25 +35,27 @@ const FALLBACK_MODELS = [
 export async function callAI(prompt, context = '', mode = 'asik', chatId = null) {
     try {
         const personality = MODES[mode.toLowerCase()] || MODES['asik'];
-        // Setup prompt dengan referensi waktu nyata
         const now = new Date();
         const currentTime = now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
-        
-        const SYSTEM_PROMPT = `Nama kamu adalah "Thirty". Kamu diciptakan oleh "Maha Raja Ahdi Khalida Fathir".
-WAKTU SAAT INI (WIB - Asia/Jakarta): ${currentTime}
-Gunakan informasi waktu ini untuk konteks jawaban.
 
-KEPRIBADIAN:
+        // Ambil memori relevan via RAG
+        let memoriesBlock = '';
+        if (chatId) {
+            const ragMemories = searchMemoriesRAG(chatId, prompt, 4);
+            if (ragMemories.length > 0) {
+                memoriesBlock = '\n\nYang kamu ingat dari masa lalu:\n';
+                memoriesBlock += ragMemories.map((m, i) =>
+                    `${i + 1}. ${m.content}`
+                ).join('\n');
+            }
+        }
+
+        const SYSTEM_PROMPT = `Nama: Thirty. Ciptaan: Maha Raja Ahdi Khalida Fathir.
+Waktu sekarang (WIB): ${currentTime}
+
 ${personality}
 
-PENTING:
-- Selalu jawab dalam Bahasa Indonesia.
-- **FORMAT JAWABAN:** Gunakan format WhatsApp agar rapi:
-  * Gunakan \*Teks Bold\* (dengan tanda bintang) untuk poin penting atau judul sub-bab.
-  * Gunakan emoji (seperti 📌, ✨, ✅) sebagai bullet points untuk daftar.
-  * Berikan jarak antar paragraf (double line break) agar tidak menumpuk.
-  * Gunakan \`\`\`kode/monospaced\`\`\` untuk angka teknis atau kode.
-- Jika menggunakan tool add_reminder, berikan HANYA JSON tool call yang valid. DILARANG menyisipkan teks, identitas, atau sapaan apapun saat memanggil fungsi.`;
+FORMAT: Jawab dalam Bahasa Indonesia. Gunakan *bold* untuk poin penting. Beri jarak antar paragraf.${memoriesBlock}`;
 
         let messages = [
             { role: 'system', content: SYSTEM_PROMPT }
@@ -68,29 +70,7 @@ PENTING:
             messages.push({ role: 'user', content: prompt });
         }
 
-        const tools = [
-            {
-                type: 'function',
-                function: {
-                    name: 'add_reminder',
-                    description: 'Schedule an automatic alarm or reminder. Use this ONLY when the user explicitly asks to be reminded or scheduled about something in the future.',
-                    parameters: {
-                        type: 'object',
-                        properties: {
-                            time: {
-                                type: 'string',
-                                description: 'The exact date and time for the reminder, formatted exactly as "YYYY-MM-DDTHH:mm:ss" in local time. Example: 2026-05-14T17:50:00'
-                            },
-                            message: {
-                                type: 'string',
-                                description: 'The message/event to remind the user about.'
-                            }
-                        },
-                        required: ['time', 'message']
-                    }
-                }
-            }
-        ];
+        const tools = [];
 
         // Looping fitur AUTO FALLBACK MODEL
         for (let i = 0; i < FALLBACK_MODELS.length; i++) {
@@ -111,7 +91,9 @@ PENTING:
                 let toolCalls = responseMessage?.tool_calls;
 
                 if (toolCalls) {
-                    messages.push(responseMessage); // Simpan request tool call ke history
+                    messages.push(responseMessage);
+
+                    let reminderSaved = false;
 
                     for (const toolCall of toolCalls) {
                         const functionName = toolCall.function.name;
@@ -127,11 +109,53 @@ PENTING:
                                     name: functionName,
                                     content: `Success: Reminder set for ${args.time}`
                                 });
+                                reminderSaved = true;
+                                console.log(`🔔 AI tool: Reminder saved for ${args.time}: ${args.message}`);
+                            }
+                        }
+                    }
+
+                    // If reminder was NOT saved (bad params), use fallback parser
+                    if (!reminderSaved && chatId) {
+                        const timeFallback = prompt.match(/(?:jam|pukul)?\s*(\d{1,2})[.:](\d{2})/i);
+                        if (timeFallback) {
+                            let h = parseInt(timeFallback[1]), m = parseInt(timeFallback[2]);
+                            if (h <= 23 && m <= 59) {
+                                const WIB_MS = 7 * 3600000;
+                                const nowUtc = Date.now();
+                                const d = new Date(nowUtc + WIB_MS);
+                                let targetWib = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h, m, 0) - WIB_MS;
+                                if (targetWib <= nowUtc) targetWib += 86400000;
+                                let msg = prompt
+                                    .replace(/(?:jam|pukul)?\s*\d{1,2}[.:]\d{2}/i, '')
+                                    .replace(/(?:ng)?ing(?:at|et)(?:kan|in|inin)?(?:\s+(?:saya|aku|gw|gue|lo|lu|elu))?\s*/i, '')
+                                    .replace(/\breminder\s*/i, '')
+                                    .replace(/\s+(buat|untuk)\s+/i, ' ')
+                                    .trim() || 'Ada tugas/pekerjaan';
+                                addReminder(chatId, targetWib, msg);
+                                reminderSaved = true;
+                                console.log(`🔔 AI fallback: Reminder saved for ${h}:${m}: ${msg}`);
+                                // Push success to tool response so AI is not confused
+                                for (const toolCall of toolCalls) {
+                                    messages.push({
+                                        role: 'tool',
+                                        tool_call_id: toolCall.id,
+                                        name: toolCall.function.name,
+                                        content: `Success: Reminder set for ${h}:${m}`
+                                    });
+                                }
                             }
                         }
                     }
 
                     // Panggil AI sekali lagi untuk merangkum hasil tool call
+                    // If reminder was saved, return confirmation directly instead
+                    if (reminderSaved) {
+                        const t = prompt.match(/(\d{1,2})[.:](\d{2})/);
+                        const hh = t ? t[1] : '??', mm = t ? t[2] : '??';
+                        return `✅ *Tugas sudah diingetin! Jangan lupa ngerjainnya, bro!* 📚✨\n\nAku bakal ngingetin kamu jam *${hh}:${mm}* nanti.`;
+                    }
+
                     const finalCompletion = await client.chat.completions.create({
                         model: currentModel,
                         messages,
@@ -141,12 +165,59 @@ PENTING:
                     return finalCompletion.choices[0]?.message?.content;
                 }
 
+                // FALLBACK: jika AI tidak memanggil tool padahal user minta reminder
+                if (chatId && /(?:ng)?ing(?:at|et)|reminder/i.test(prompt)) {
+                    const timeFallback = prompt.match(/(?:jam|pukul)\s*(\d{1,2})[.:](\d{2})/i) || prompt.match(/\b(\d{1,2})[.:](\d{2})\b/);
+                    if (timeFallback) {
+                        let h = parseInt(timeFallback[1]), m = parseInt(timeFallback[2]);
+                        if (h <= 23 && m <= 59) {
+                            const WIB_MS = 7 * 3600000;
+                            const nowUtc = Date.now();
+                            const d = new Date(nowUtc + WIB_MS);
+                            let targetWib = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h, m, 0) - WIB_MS;
+                            if (targetWib <= nowUtc) targetWib += 86400000;
+                            let msg = prompt
+                                .replace(/(?:jam|pukul)?\s*\d{1,2}[.:]\d{2}/i, '')
+                                .replace(/(?:ng)?ing(?:at|et)(?:kan|in|inin)?(?:\s+(?:saya|aku|gw|gue|lo|lu|elu))?\s*/i, '')
+                                .replace(/\breminder\s*/i, '')
+                                .replace(/\s+(buat|untuk)\s+/i, ' ')
+                                .trim() || 'Ada tugas/pekerjaan';
+                            addReminder(chatId, targetWib, msg);
+                            return `✅ Tugas sudah diingetin! Jangan lupa ngerjainnya, bro! 📚✨ Aku bakal ngingetin kamu jam ${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}.`;
+                        }
+                    }
+                }
+
                 return responseMessage?.content || 'Maaf, tidak ada response dari AI.';
                 
             } catch (error) {
+                // Handle Groq tool_use_failed error — lanjut ke fallback parser
+                if (error?.code === 'tool_use_failed' && chatId) {
+                    const timeFallback = prompt.match(/(?:jam|pukul)?\s*(\d{1,2})[.:](\d{2})/i);
+                    if (timeFallback) {
+                        let h = parseInt(timeFallback[1]), m = parseInt(timeFallback[2]);
+                        if (h <= 23 && m <= 59) {
+                            const WIB_MS = 7 * 3600000;
+                            const nowUtc = Date.now();
+                            const d = new Date(nowUtc + WIB_MS);
+                            let targetWib = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h, m, 0) - WIB_MS;
+                            if (targetWib <= nowUtc) targetWib += 86400000;
+                            let msg = prompt
+                                .replace(/(?:jam|pukul)?\s*\d{1,2}[.:]\d{2}/i, '')
+                                .replace(/(?:ng)?ing(?:at|et)(?:kan|in|inin)?(?:\s+(?:saya|aku|gw|gue|lo|lu|elu))?\s*/i, '')
+                                .replace(/\breminder\s*/i, '')
+                                .replace(/\s+(buat|untuk)\s+/i, ' ')
+                                .trim() || 'Ada tugas/pekerjaan';
+                            addReminder(chatId, targetWib, msg);
+                            console.log(`🔔 Groq tool_use_failed fallback: Reminder ${h}:${m}: ${msg}`);
+                            return `✅ *Tugas sudah diingetin! Jangan lupa ngerjainnya, bro!* 📚✨\n\nAku bakal ngingetin kamu jam *${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}* nanti.`;
+                        }
+                    }
+                }
+
                 // Jika error adalah Rate Limit, lanjut ke model berikutnya
-                if (error?.status === 429 || error?.message?.includes('Rate limit') || error?.message?.includes('429')) {
-                    console.warn(`⚠️ Model ${currentModel} limit/penuh! Langsung oper ke model cadangan...`);
+                if (error?.status === 429 || error?.message?.includes('Rate limit') || error?.message?.includes('429') || error?.code === 'tool_use_failed') {
+                    console.warn(`⚠️ Model ${currentModel} error (${error.code || error.status}), oper ke cadangan...`);
                     continue; 
                 }
                 
@@ -275,4 +346,130 @@ export async function getVoiceBuffer(text, lang = 'id') {
         if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
         return null;
     }
+}
+
+// ==================== LONG-TERM LEARNING ENGINE ====================
+
+const LEARNING_INTERVAL = 8; // Extract memories every N interactions
+
+export async function extractAndStoreMemories(chatId, recentHistory) {
+    if (!chatId || !recentHistory || recentHistory.length < 3) return;
+
+    const conversationText = recentHistory
+        .map(m => `[${m.sender}]: ${m.message}`)
+        .join('\n');
+
+    try {
+        const completion = await client.chat.completions.create({
+            model: 'llama-3.1-8b-instant',
+            messages: [
+                {
+                    role: 'system',
+                    content: `Kamu adalah sistem ekstraksi memori untuk AI asisten bernama Thirty.
+Tugasmu: analisis percakapan berikut dan ekstrak fakta-fakta penting yang layak diingat jangka panjang. 
+Fakta bisa berupa:
+- Informasi pribadi user (hobi, pekerjaan, kesukaan, keluarga)
+- Topik yang sering dibahas
+- Preferensi user (suka/tidak suka sesuatu)
+- Rencana atau goals user
+- Insight menarik dari diskusi
+
+Output: HANYA array JSON tanpa teks lain. Format:
+[{"category": "personal_info|preference|topic|plan|insight", "content": "fakta yang diingat", "confidence": 1}]
+
+Jika tidak ada fakta penting, output: []`
+                },
+                { role: 'user', content: conversationText }
+            ],
+            max_tokens: 512,
+            temperature: 0.3,
+        });
+
+        const raw = completion.choices[0]?.message?.content?.trim();
+        if (!raw || raw === '[]') return;
+
+        // Parse JSON array dari response
+        let facts;
+        try {
+            // Coba parse langsung, atau cari JSON di dalam teks
+            const jsonMatch = raw.match(/\[[\s\S]*\]/);
+            facts = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(raw);
+        } catch {
+            console.warn('⚠️ Failed to parse memory extraction JSON, raw:', raw.substring(0, 200));
+            return;
+        }
+
+        if (!Array.isArray(facts)) return;
+
+        let storedCount = 0;
+        for (const fact of facts) {
+            if (fact.content && fact.content.length > 10) {
+                const existing = searchMemories(chatId, fact.content.substring(0, 30), 1);
+                if (existing.length === 0) {
+                    addMemory(chatId, fact.content, fact.category || 'general', fact.confidence || 1, 'chat');
+                    storedCount++;
+                }
+            }
+        }
+
+        console.log(`🧠 Learning: stored ${storedCount} new memories for ${chatId}`);
+    } catch (error) {
+        console.error('❌ Memory extraction error:', error.message);
+    }
+}
+
+export async function extractFromDocument(chatId, docText, fileName) {
+    if (!chatId || !docText || docText.length < 50) return;
+
+    try {
+        const completion = await client.chat.completions.create({
+            model: 'llama-3.1-8b-instant',
+            messages: [
+                {
+                    role: 'system',
+                    content: `Ekstrak pengetahuan penting dari dokumen berikut.
+Output HANYA array JSON:
+[{"category": "topic|fact|definition|insight", "content": "pengetahuan yang diekstrak", "confidence": 1}]
+
+Fokus pada fakta-fakta yang berguna untuk diingat jangka panjang.
+Jika tidak ada, output: []`
+                },
+                { role: 'user', content: `Judul: ${fileName}\n\nIsi:\n${docText.substring(0, 3000)}` }
+            ],
+            max_tokens: 512,
+            temperature: 0.3,
+        });
+
+        const raw = completion.choices[0]?.message?.content?.trim();
+        if (!raw || raw === '[]') return;
+
+        let facts;
+        try {
+            const jsonMatch = raw.match(/\[[\s\S]*\]/);
+            facts = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(raw);
+        } catch {
+            console.warn('⚠️ Failed to parse document memory JSON');
+            return;
+        }
+
+        if (!Array.isArray(facts)) return;
+
+        let storedCount = 0;
+        for (const fact of facts) {
+            if (fact.content && fact.content.length > 10) {
+                const existing = searchMemories(chatId, fact.content.substring(0, 30), 1);
+                if (existing.length === 0) {
+                    addMemory(chatId, `[Dari dokumen ${fileName}] ${fact.content}`, fact.category || 'topic', fact.confidence || 1, 'document');
+                    storedCount++;
+                }
+            }
+        }
+        console.log(`📄 Document learning: stored ${storedCount} memories from ${fileName}`);
+    } catch (error) {
+        console.error('❌ Document memory extraction error:', error.message);
+    }
+}
+
+export function getLearningInterval() {
+    return LEARNING_INTERVAL;
 }

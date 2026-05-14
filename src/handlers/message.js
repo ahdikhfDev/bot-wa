@@ -1,17 +1,50 @@
-import { callAI, summarizeText, chatWithContext, transcribeAudio, callAIVision, getVoiceBuffer } from '../services/ai.js';
-import { addJadwal, getJadwal, deleteJadwal, addContextMessage, getGroupHistory, clearGroupContext, getMode, setMode, isWhitelisted, addWhitelist, removeWhitelist, getAllWhitelist } from '../services/db.js';
+import { callAI, chatWithContext, transcribeAudio, callAIVision, getVoiceBuffer, extractAndStoreMemories, extractFromDocument, getLearningInterval } from '../services/ai.js';
+import { addContextMessage, getGroupHistory, getMode, isWhitelisted, addReminder, addMemory, getInteractionCount, incrementInteractionCount, resetInteractionCount, broadcastTargets, pendingBroadcasts, deletePendingBroadcast } from '../services/db.js';
+import { searchWeb, searchNews, formatSearchResults, detectSearchQuery } from '../services/search.js';
 import { downloadMediaMessage } from 'baileys';
 import { Sticker, StickerTypes } from 'wa-sticker-formatter';
 import fs from 'fs/promises';
 import path from 'path';
+import * as cmd from './commands.js';
 
 const PREFIX = process.env.BOT_PREFIX || '/';
-const BOT_NAME = process.env.BOT_NAME || 'WA Bot AI';
 const GROUP_CONTEXT_ENABLED = process.env.GROUP_CONTEXT_ENABLED !== 'false';
+
+const spamCooldowns = new Map();
+const SPAM_COOLDOWN_MS = parseInt(process.env.SPAM_COOLDOWN_MS) || 1500;
 
 export async function handleMessage(sock, msg) {
     try {
         let messageContent = getMessageText(msg);
+        if (!messageContent) return;
+
+        let remoteJid = msg.key.remoteJid;
+        let senderJid = msg.key.participant || msg.key.remoteJid;
+        let senderNumber = senderJid.split('@')[0];
+        let OWNER_NUMBER = process.env.OWNER_NUMBER;
+        let OWNER_LID = '36722373091439';
+        let isOwner = senderNumber === OWNER_NUMBER || senderNumber === OWNER_LID;
+
+        // ==================== REMINDER DETECTION (FIRST! Sebelum apapun) ====================
+        const reminderData = extractReminder(messageContent);
+        if (reminderData && isOwner) {
+            addReminder(remoteJid, reminderData.triggerTimeMs, reminderData.message);
+            const timeStr = `${String(reminderData.hours).padStart(2, '0')}:${String(reminderData.minutes).padStart(2, '0')}`;
+            console.log(`🔔 REMINDER SET: ${reminderData.message} at ${timeStr} WIB for ${remoteJid}`);
+            await sock.sendMessage(remoteJid, {
+                text: `✅ *Tugas sudah diingetin! Jangan lupa ngerjainnya, bro!* 📚✨\n\nAku bakal ngingetin kamu jam *${timeStr}* nanti.`
+            });
+            return;
+        }
+
+        // ==================== ANTI-SPAM COOLDOWN ====================
+        if (!isOwner) {
+            const now = Date.now();
+            const lastTime = spamCooldowns.get(remoteJid) || 0;
+            if (now - lastTime < SPAM_COOLDOWN_MS) return;
+            spamCooldowns.set(remoteJid, now);
+        }
+
         let isAudio = false;
 
         const msgType = Object.keys(msg.message || {}).find(
@@ -21,17 +54,23 @@ export async function handleMessage(sock, msg) {
         let audioMsgToDownload = null;
         let isImage = false;
         let imageMsgToDownload = null;
+        let isDocument = false;
+        let documentMsgToDownload = null;
 
         if (msgType === 'audioMessage') {
             isAudio = true;
-            messageContent = '[Voice Note]'; // Placeholder agar tidak di-return awal
+            messageContent = '[Voice Note]';
             audioMsgToDownload = msg;
         } else if (msgType === 'imageMessage') {
             isImage = true;
             messageContent = msg.message.imageMessage.caption || '[Gambar]';
             imageMsgToDownload = msg;
+        } else if (msgType === 'documentMessage') {
+            isDocument = true;
+            const doc = msg.message.documentMessage;
+            messageContent = doc?.caption || `[Dokumen: ${doc?.fileName || 'File'}]`;
+            documentMsgToDownload = msg;
         } else {
-            // Cek apakah pesan meng-quote (me-reply) sebuah media
             const contextInfo = msg.message?.[msgType]?.contextInfo || {};
             const quotedMsg = contextInfo.quotedMessage;
             
@@ -41,13 +80,17 @@ export async function handleMessage(sock, msg) {
             } else if (quotedMsg && quotedMsg.imageMessage) {
                 isImage = true;
                 imageMsgToDownload = { key: msg.key, message: quotedMsg };
+            } else if (quotedMsg && quotedMsg.documentMessage) {
+                isDocument = true;
+                documentMsgToDownload = { key: msg.key, message: quotedMsg };
             }
         }
 
-        if (!messageContent && !isAudio && !isImage) return;
+        if (!messageContent && !isAudio && !isImage && !isDocument) return;
 
-        const remoteJid = msg.key.remoteJid;
+        remoteJid = msg.key.remoteJid;
         const isGroup = remoteJid.endsWith('@g.us');
+        if (isGroup) broadcastTargets.set(remoteJid, msg.pushName || 'Unknown');
         const sender = msg.pushName || 'Unknown';
         // Ambil nomor bot saja (tanpa @s.whatsapp.net dan tanpa :device)
         const botNumber = sock.user?.id?.split('@')[0]?.split(':')[0];
@@ -85,14 +128,35 @@ export async function handleMessage(sock, msg) {
         if (command) console.log(`   → Command: ${command}`);
         if (isGroup) console.log(`   → isMentioned: ${isMentioned}, botNumber: ${botNumber}`);
 
+        // ==================== BROADCAST CONFIRMATION ====================
+        if (isOwner && !command) {
+            const pending = pendingBroadcasts.get(remoteJid);
+            if (pending) {
+                const answer = text.trim().toLowerCase();
+                if (/^(y|yes|ya|yakin|send|kirim|gas|lanjut)$/.test(answer)) {
+                    deletePendingBroadcast(remoteJid);
+                    let sent = 0, failed = 0;
+                    for (const [jid] of pending.targets) {
+                        try {
+                            await sock.sendMessage(jid, { text: `📢 *Broadcast dari Owner* 📢\n\n${pending.message}` });
+                            sent++;
+                        } catch { failed++; }
+                    }
+                    await sock.sendMessage(remoteJid, { text: `✅ Broadcast selesai!\n📨 Terkirim: ${sent}/${pending.targets.size}\n❌ Gagal: ${failed}` });
+                    return;
+                } else if (/^(n|no|gak|nggak|cancel|batal|jangan)$/.test(answer)) {
+                    deletePendingBroadcast(remoteJid);
+                    await sock.sendMessage(remoteJid, { text: '❌ Broadcast dibatalkan.' });
+                    return;
+                }
+                // Kalau bukan y/n, lanjut ke handler normal (abaikan pending)
+            }
+        }
+
         // ==================== SECURITY & WHITELIST ====================
-        const senderJid = msg.key.participant || msg.key.remoteJid;
-        const senderNumber = senderJid.split('@')[0];
         
         // Owner bisa dikenali dari Nomor HP atau dari LID (Logical ID) jika di grup
-        const OWNER_NUMBER = process.env.OWNER_NUMBER;
-        const OWNER_LID = '36722373091439'; // LID dari hasil debug log
-        const isOwner = senderNumber === OWNER_NUMBER || senderNumber === OWNER_LID;
+        isOwner = senderNumber === OWNER_NUMBER || senderNumber === OWNER_LID;
         
         console.log(`   → senderJid: ${senderJid}, isOwner: ${isOwner} (owner in env: ${process.env.OWNER_NUMBER})`);
 
@@ -166,143 +230,114 @@ export async function handleMessage(sock, msg) {
             }
         }
 
+        // ==================== DOCUMENT / PDF HANDLING ====================
+        if (isDocument && (isPrivateChat || (isGroup && isMentioned))) {
+            await sock.sendMessage(remoteJid, { text: '📄 _Membaca dokumen..._' });
+            try {
+                const buffer = await downloadMediaMessage(
+                    documentMsgToDownload,
+                    'buffer',
+                    {},
+                    { logger: console, reuploadRequest: sock.updateMediaMessage }
+                );
+
+                const msgType = Object.keys(msg.message || {}).find(t => !t.startsWith('contextInfo'));
+                const directDoc = msg.message?.documentMessage;
+                const quotedDoc = msg.message?.[msgType]?.contextInfo?.quotedMessage?.documentMessage;
+                const docInfo = directDoc || quotedDoc || {};
+                const fileName = docInfo.fileName || 'file';
+                const isPDF = fileName.toLowerCase().endsWith('.pdf');
+
+                let docText = '';
+                if (isPDF) {
+                    const { PDFParse } = await import('pdf-parse');
+                    const u8 = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+                    const parser = new PDFParse({ data: u8 });
+                    await parser.load();
+                    const allText = await parser.getText();
+                    docText = (allText?.text || '').substring(0, 3000);
+                } else {
+                    docText = buffer.toString('utf-8').substring(0, 3000);
+                }
+
+                if (docText.trim().length < 10) {
+                    await sock.sendMessage(remoteJid, { text: `📄 *${fileName}*\n\n_(Dokumen kosong atau tidak bisa dibaca)_` });
+                    return;
+                }
+
+                const caption = text && text !== `[Dokumen: ${fileName}]` ? text : `Ini isi dari ${fileName}. Jelaskan secara singkat.`;
+                const mode = getMode(remoteJid);
+                const response = await callAI(`Isi dokumen: """${docText.substring(0, 2000)}"""\n\nPertanyaan: ${caption}`, '', mode, remoteJid);
+                await sock.sendMessage(remoteJid, { text: `📄 *${fileName}*\n\n${response}` });
+
+                // Simpan konten dokumen ke memori dengan confidence tinggi
+                addMemory(remoteJid, `Isi dokumen "${fileName}": ${docText.substring(0, 500)}`, 'document', 10, 'document');
+                addMemory(remoteJid, `Ringkasan "${fileName}": ${response.substring(0, 300)}`, 'document', 10, 'document');
+
+                // Ekstrak pengetahuan tambahan (async)
+                if (docText.length > 100) {
+                    extractFromDocument(remoteJid, docText, fileName).catch(() => {});
+                }
+                return;
+            } catch (err) {
+                console.error('Document processing error:', err);
+                await sock.sendMessage(remoteJid, { text: '❌ Gagal membaca dokumen.' });
+                return;
+            }
+        }
+
         // Hitung ulang command & args jika teks berubah (hasil transkrip)
         command = text.startsWith(PREFIX) ? text.slice(1).split(' ')[0].toLowerCase() : null;
         args = text.split(' ').slice(1);
 
-        // ==================== OWNER COMMANDS ====================
-        if (command === 'allow' && isOwner) {
-            let targetJid = remoteJid; // Default: allow chat saat ini (grup atau DM)
-            
-            if (mentionedJids.length > 0) {
-                targetJid = mentionedJids[0]; // Allow user yang di-tag
-            } else if (args[0]) {
-                const num = args[0].replace(/[^0-9]/g, '');
-                if (num) targetJid = `${num}@s.whatsapp.net`; // Allow via nomor HP
-            }
+        // ==================== COMMAND DISPATCH ====================
+        const dispatch = {
+            'allow': () => cmd.cmdAllow(sock, remoteJid, isOwner, mentionedJids, args),
+            'ban': () => cmd.cmdBan(sock, remoteJid, isOwner, mentionedJids, args),
+            'list': () => cmd.cmdList(sock, remoteJid, isOwner),
+            'say': () => cmd.cmdSay(sock, remoteJid, args),
+            's': () => cmdSticker(sock, remoteJid, isGroup, sender, args, null),
+            'sticker': () => cmdSticker(sock, remoteJid, isGroup, sender, args, null),
+            'help': () => cmd.cmdHelp(sock, remoteJid),
+            'mode': () => cmd.cmdMode(sock, remoteJid, args),
+            'rangkum': () => cmd.cmdRangkum(sock, remoteJid, args),
+            'jadwal': () => cmd.cmdJadwal(sock, remoteJid, isGroup, args, sender),
+            'reset': () => cmd.cmdReset(sock, remoteJid, isOwner, isGroup),
+            'search': () => cmd.cmdSearch(sock, remoteJid, args),
+            'cari': () => cmd.cmdSearch(sock, remoteJid, args),
+            'translate': () => cmd.cmdTranslate(sock, remoteJid, args),
+            'tr': () => cmd.cmdTranslate(sock, remoteJid, args),
+            'terjemahkan': () => cmd.cmdTranslate(sock, remoteJid, args),
+            'weather': () => cmd.cmdWeather(sock, remoteJid, args),
+            'cuaca': () => cmd.cmdWeather(sock, remoteJid, args),
+            'broadcast': () => cmd.cmdBroadcast(sock, remoteJid, args, text),
+            'bc': () => cmd.cmdBroadcast(sock, remoteJid, args, text),
+            'template': () => cmd.cmdTemplate(sock, remoteJid, args, text),
+            'tpl': () => cmd.cmdTemplate(sock, remoteJid, args, text),
+        };
 
-            addWhitelist(targetJid);
-            await sock.sendMessage(remoteJid, { text: `✅ *Akses Diberikan*\nTarget: ${targetJid}\nSekarang diizinkan menggunakan bot.` });
-            return;
-        }
-
-        if (command === 'say') {
-            const voiceBuffer = await getVoiceBuffer(args.join(' '));
-            if (voiceBuffer) {
-                await sock.sendMessage(remoteJid, { audio: voiceBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true }, { quoted: msg });
+        if (command && dispatch[command]) {
+            // Owner-only check for sensitive commands
+            if (['allow', 'ban', 'list', 'broadcast', 'bc', 'template', 'tpl', 'reset'].includes(command) && !isOwner) {
+                await sock.sendMessage(remoteJid, { text: '⛔ *Akses Ditolak*\nHanya Maha Raja yang bisa.' });
                 return;
             }
+            await dispatch[command]();
+            return;
         }
 
-        if (command === 's' || command === 'sticker') {
-            let mediaToSticker = null;
-            if (isImage) {
-                mediaToSticker = imageMsgToDownload;
-            } else if (msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage) {
-                mediaToSticker = msg.message.extendedTextMessage.contextInfo.quotedMessage.imageMessage;
-            }
-
-            if (mediaToSticker) {
-                try {
-                    const buffer = await downloadMediaMessage(mediaToSticker, 'buffer', {}, { logger: console });
-                    const sticker = new Sticker(buffer, {
-                        pack: 'Thirty AI Sticker',
-                        author: 'Maha Raja Ahdi Khalida Fathir',
-                        type: StickerTypes.FULL,
-                        categories: ['🤩', '🎉'],
-                        id: 'thirty-ai',
-                        quality: 70,
-                    });
-                    const stickerBuffer = await sticker.toBuffer();
-                    await sock.sendMessage(remoteJid, { sticker: stickerBuffer }, { quoted: msg });
-                    return;
-                } catch (err) {
-                    console.error('Sticker Error:', err);
-                    await sock.sendMessage(remoteJid, { text: '❌ Gagal membuat stiker. Pastikan file adalah gambar yang valid.' });
-                    return;
-                }
-            } else {
-                await sock.sendMessage(remoteJid, { text: '📸 *Cara Pakai:* Kirim gambar dengan caption */s* atau balas (reply) gambar dengan */s*.' });
+        // ==================== SEARCH KEYWORD DETECTION ====================
+        if (!command && (isPrivateChat || (isGroup && isMentioned))) {
+            const searchDetect = detectSearchQuery(text);
+            if (searchDetect) {
+                await sock.sendPresenceUpdate('composing', remoteJid);
+                await sock.sendMessage(remoteJid, { text: `🔍 *Mencari ${searchDetect.type === 'news' ? 'berita' : 'info'} tentang:* ${searchDetect.query}...` });
+                const results = searchDetect.type === 'news'
+                    ? await searchNews(searchDetect.query)
+                    : await searchWeb(searchDetect.query);
+                await sock.sendMessage(remoteJid, { text: formatSearchResults(results) });
                 return;
             }
-        }
-
-        if (command === 'ban' && isOwner) {
-            let targetJid = remoteJid; 
-            
-            if (mentionedJids.length > 0) {
-                targetJid = mentionedJids[0]; 
-            } else if (args[0]) {
-                const num = args[0].replace(/[^0-9]/g, '');
-                if (num) targetJid = `${num}@s.whatsapp.net`;
-            }
-
-            removeWhitelist(targetJid);
-            await sock.sendMessage(remoteJid, { text: `❌ *Akses Dicabut*\nTarget: ${targetJid}\nSekarang dilarang menggunakan bot.` });
-            return;
-        }
-
-        if (command === 'list' && isOwner) {
-            const list = getAllWhitelist();
-            if (list.length === 0) {
-                await sock.sendMessage(remoteJid, { text: '📭 Daftar whitelist masih kosong.' });
-                return;
-            }
-            const textList = list.map((item, index) => `${index + 1}. ${item.jid}`).join('\n');
-            await sock.sendMessage(remoteJid, { text: `📋 *Daftar Whitelist (Akses)*\n\n${textList}` });
-            return;
-        }
-
-        // ==================== COMMAND HANDLERS ====================
-
-        if (command === 'help') {
-            await sendHelp(sock, remoteJid);
-            return;
-        }
-
-        if (command === 'mode') {
-            const newMode = args[0]?.toLowerCase();
-            const validModes = ['bad', 'formal', 'profesional', 'asik'];
-            
-            if (!newMode || !validModes.includes(newMode)) {
-                await sock.sendMessage(remoteJid, { 
-                    text: `⚙️ *Setting Mode AI*\n\nPilih gaya bicara bot:\n• \`/mode asik\` (Santai & gaul)\n• \`/mode formal\` (Baku & sopan)\n• \`/mode profesional\` (Solutif & elegan)\n• \`/mode bad\` (Sarkas & pedas)\n\n_Mode saat ini: *${getMode(remoteJid)}*_` 
-                });
-                return;
-            }
-
-            setMode(remoteJid, newMode);
-            await sock.sendMessage(remoteJid, { text: `✅ Mode AI berhasil diubah ke *${newMode}*! Coba ajak ngobrol sekarang.` });
-            return;
-        }
-
-        if (command === 'rangkum') {
-            const inputText = args.join(' ');
-            if (!inputText) {
-                await sock.sendMessage(remoteJid, { text: '❌ Usage: /rangkum [teks yang mau dirangkum]' });
-                return;
-            }
-            const mode = getMode(remoteJid);
-            const summary = await summarizeText(inputText, mode);
-            await sock.sendMessage(remoteJid, { text: `📝 *Rangkuman:*\n\n${summary}` });
-            return;
-        }
-
-        if (command === 'jadwal') {
-            await handleJadwalCommand(sock, remoteJid, isGroup, args, sender);
-            return;
-        }
-
-        if (command === 'reset') {
-            if (!isOwner) {
-                await sock.sendMessage(remoteJid, { text: '⛔ *Akses Ditolak*\nHanya Maha Raja yang bisa mereset ingatan saya.' });
-                return;
-            }
-            if (isGroup) {
-                clearGroupContext(remoteJid);
-                await sock.sendMessage(remoteJid, { text: '🧹 Konteks grup sudah di-reset oleh Maha Raja!' });
-            }
-            return;
         }
 
         // ==================== AI CHAT (Context-aware) ====================
@@ -363,6 +398,20 @@ export async function handleMessage(sock, msg) {
             if (isGroup && GROUP_CONTEXT_ENABLED) {
                 addContextMessage(remoteJid, 'Thirty (Bot)', response);
             }
+
+            // LEARNING ENGINE: Track interactions & extract memories periodically
+            if (isGroup && GROUP_CONTEXT_ENABLED) {
+                incrementInteractionCount(remoteJid);
+                const count = getInteractionCount(remoteJid);
+                const interval = getLearningInterval();
+                if (count >= interval) {
+                    console.log(`🧠 Learning trigger hit for ${remoteJid} (${count} interactions), extracting memories...`);
+                    const history = getGroupHistory(remoteJid, 20);
+                    extractAndStoreMemories(remoteJid, history);
+                    resetInteractionCount(remoteJid);
+                }
+            }
+
             return;
         }
 
@@ -381,6 +430,46 @@ export async function handleMessage(sock, msg) {
             await sock.sendMessage(msg.key.remoteJid, { text: '❌ Maaf, ada error. Coba lagi ya.' });
         } catch (e) {}
     }
+}
+
+// ==================== REMINDER EXTRACTOR ====================
+
+function extractReminder(text) {
+    if (!text) return null;
+    const lower = text.toLowerCase();
+
+    const hasReminderKeyword = /(?:ng)?ing(?:at|et)|reminder/i.test(lower);
+    if (!hasReminderKeyword) return null;
+
+    const timePattern = /(\d{1,2})[.:](\d{2})/;
+    const timeMatch = text.match(timePattern);
+    if (!timeMatch) return null;
+
+    const hours = parseInt(timeMatch[1]);
+    const minutes = parseInt(timeMatch[2]);
+    if (hours > 23 || minutes > 59) return null;
+
+    let message = text
+        .replace(/\d{1,2}[.:]\d{2}/, '')
+        .replace(/thirty\s*/i, '')
+        .replace(/(?:jam|pukul)\s*/i, '')
+        .replace(/(?:ng)?ing(?:at|et)(?:kan|in|inin)?(?:\s+(?:saya|aku|gw|gue|lo|lu|elu))?\s*/i, '')
+        .replace(/\breminder\s*/i, '')
+        .replace(/\s+(buat|untuk|supaya|biar)\s+/i, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!message) message = 'Ada tugas/pekerjaan';
+
+    // WIB timezone fix: server UTC, user WIB (UTC+7)
+    const WIB_MS = 7 * 3600000;
+    const nowUtc = Date.now();
+    const d = new Date(nowUtc + WIB_MS); // date components in WIB
+    let targetWib = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hours, minutes, 0) - WIB_MS;
+    if (targetWib <= nowUtc) targetWib += 86400000;
+
+    console.log(`🧠 extractReminder: \"${text}\" → \"${message}\" at ${hours}:${minutes} WIB`);
+    return { triggerTimeMs: targetWib, message, hours, minutes };
 }
 
 // ==================== HELPER FUNCTIONS ====================
@@ -443,20 +532,37 @@ Halo! Saya adalah *Thirty*, asisten AI cerdas yang siap membantu kebutuhanmu. �
 🤖 *PENGATURAN AI*
 • 🎨 */mode* : Ganti kepribadian (bad, formal, profesional, asik)
 
-🛠️ *FITUR MULTIMEDIA*
-• 🎙️ *Voice Note* : Kirim VN, saya akan dengerin & balas pakai VN juga!
-• 👁️ *Vision AI* : Kirim/balas foto untuk saya analisis isinya.
-• 🎨 */s* atau */sticker* : Ubah foto jadi stiker secara instan.
-• 🗣️ */say [teks]* : Suruh saya bicara dalam bentuk pesan suara.
+🛠️ *FITUR MULTIMEDIA & SEARCH*
+• 🔍 */search* atau "cari [query]" : Cari info di web
+• 📰 */cari [berita]* atau "berita [query]" : Cari berita terbaru
+• 🎙️ *Voice Note* : Kirim VN, saya dengerin & balas VN
+• 👁️ *Vision AI* : Balas foto untuk saya analisis
+• 🎨 */s* atau */sticker* : Ubah foto jadi stiker
+• 🗣️ */say [teks]* : Suruh saya bicara (Voice Note)
+• 📄 *Dokumen/PDF* : Kirim file, saya baca & jelaskan
 
-📅 *MANAGEMENT & PRODUCTIVITY*
-• 📝 */rangkum [teks]* : Ringkas pesan yang panjang jadi pendek.
-• 🕒 *Auto Reminder* : Cukup ketik "Ingatkan saya [jam] buat [acara]", saya akan catat otomatis!
-• 📅 */jadwal list* : Lihat semua daftar jadwal di grup.
+🌍 *FITUR UTILITY*
+• 🌤️ */cuaca [kota]* : Cek cuaca (atau */weather*)
+• 🌍 */translate [teks]* : Terjemahkan ke Indonesia
+• 🧠 *Auto Learning* : Bot belajar dari percakapan — makin ngobrol makin pinter
+• 🧠 *RAG Memory* : Bot ingat topik lama & konten dokumen
+• 📝 */rangkum [teks]* : Ringkas teks panjang
+
+📅 *PRODUKTIVITAS*
+• 🕒 *Auto Reminder* : "Ingatkan saya [jam] buat [acara]"
+• 📅 */jadwal list* : Lihat jadwal grup
+
+👑 *OWNER ONLY*
+• 📢 */broadcast list* : Lihat daftar grup
+• 📢 */broadcast kirim [pesan]* : Kirim ke SEMUA grup
+• 📢 */broadcast kirim 1 3 [pesan]* : Kirim ke grup tertentu aja
+• 📋 */template list* : Lihat template pesan siap pakai
+• 📋 */template kirim [nama]* : Kirim template ke grup
+• 📋 */template isi [nama] [field=nilai]* : Isi field & kirim template
 
 💡 *TIPS:*
-- Di *Grup*, saya merespon jika dipanggil "Thirty", di-mention, atau membalas pesan saya.
-- Di *Private Chat*, kita bisa ngobrol langsung kapan saja!
+• Di *Grup*, saya respon jika dipanggil "Thirty", di-mention, atau reply pesan saya.
+• Di *Private Chat*, ngobrol langsung kapan aja!
 
 Ciptaan: *Maha Raja Ahdi Khalida Fathir* 👑`.trim();
 
