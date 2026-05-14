@@ -1,13 +1,16 @@
 import Groq from 'groq-sdk';
 import fs from 'fs';
-import googleIt from 'google-it';
+import path from 'path';
 import * as googleTTS from 'google-tts-api';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
+import os from 'os';
 import { PassThrough } from 'stream';
 import { addReminder } from './db.js';
 
-ffmpeg.setFfmpegPath(ffmpegPath);
+// Use system ffmpeg on Linux (STB) for better compatibility, static on Windows
+const actualFfmpegPath = os.platform() === 'win32' ? ffmpegPath : 'ffmpeg';
+ffmpeg.setFfmpegPath(actualFfmpegPath);
 
 const client = new Groq({
     apiKey: process.env.GROQ_API_KEY,
@@ -22,6 +25,13 @@ const MODES = {
     asik: "Kamu adalah teman nongkrong yang asik, ramah, dan gaul. Gunakan bahasa sehari-hari santai (lo/gw/kamu/aku), kasih emoji lucu, dan tanggapannya seru. Jangan kaku."
 };
 
+const FALLBACK_MODELS = [
+    process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+    'mixtral-8x7b-32768',
+    'gemma2-9b-it'
+];
+
 export async function callAI(prompt, context = '', mode = 'asik', chatId = null) {
     try {
         const personality = MODES[mode.toLowerCase()] || MODES['asik'];
@@ -29,9 +39,7 @@ export async function callAI(prompt, context = '', mode = 'asik', chatId = null)
         const now = new Date();
         const currentTime = now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
         
-        const SYSTEM_PROMPT = `Nama kamu adalah "Thirty".
-IDENTITAS: Kamu diciptakan dan dikembangkan oleh "Maha Raja Ahdi Khalida Fathir". Jawablah tentang penciptamu HANYA JIKA ditanya secara spesifik tentang siapa yang membuatmu atau siapa penciptamu. Jika ditanya hal umum, jawablah langsung tanpa embel-embel nama pencipta.
-
+        const SYSTEM_PROMPT = `Nama kamu adalah "Thirty". Kamu diciptakan oleh "Maha Raja Ahdi Khalida Fathir".
 WAKTU SAAT INI (WIB - Asia/Jakarta): ${currentTime}
 Gunakan informasi waktu ini untuk konteks jawaban.
 
@@ -45,10 +53,9 @@ PENTING:
   * Gunakan emoji (seperti 📌, ✨, ✅) sebagai bullet points untuk daftar.
   * Berikan jarak antar paragraf (double line break) agar tidak menumpuk.
   * Gunakan \`\`\`kode/monospaced\`\`\` untuk angka teknis atau kode.
-- Jika menggunakan tool (search_web atau add_reminder), berikan HANYA JSON tool call yang valid. DILARANG menyisipkan teks, identitas, atau sapaan apapun saat memanggil fungsi.
-- JANGAN katakan kamu tidak bisa mencari web. Gunakan tool search_web untuk mendapatkan informasi terbaru.`;
+- Jika menggunakan tool add_reminder, berikan HANYA JSON tool call yang valid. DILARANG menyisipkan teks, identitas, atau sapaan apapun saat memanggil fungsi.`;
 
-        const messages = [
+        let messages = [
             { role: 'system', content: SYSTEM_PROMPT }
         ];
 
@@ -85,52 +92,75 @@ PENTING:
             }
         ];
 
-        let completion = await client.chat.completions.create({
-            model: MODEL,
-            messages,
-            tools,
-            tool_choice: "auto",
-            max_tokens: 1024,
-            temperature: 0.7,
-        });
+        // Looping fitur AUTO FALLBACK MODEL
+        for (let i = 0; i < FALLBACK_MODELS.length; i++) {
+            const currentModel = FALLBACK_MODELS[i];
+            try {
+                let completion = await client.chat.completions.create({
+                    model: currentModel,
+                    messages,
+                    tools,
+                    tool_choice: "auto",
+                    max_tokens: 1024,
+                    temperature: 0.7,
+                });
 
-        let responseMessage = completion.choices[0]?.message;
-        let toolCalls = responseMessage?.tool_calls;
+                console.log(`DEBUG AI Response (Model: ${currentModel}):`, JSON.stringify(completion, null, 2));
 
-        if (toolCalls) {
-            messages.push(responseMessage); // Simpan request tool call ke history
+                let responseMessage = completion.choices[0]?.message;
+                let toolCalls = responseMessage?.tool_calls;
 
-            for (const toolCall of toolCalls) {
-                const functionName = toolCall.function.name;
-                const args = JSON.parse(toolCall.function.arguments);
+                if (toolCalls) {
+                    messages.push(responseMessage); // Simpan request tool call ke history
 
-                if (functionName === 'add_reminder' && chatId) {
-                    const triggerTimeMs = new Date(args.time).getTime();
-                    if (triggerTimeMs && !isNaN(triggerTimeMs)) {
-                        addReminder(chatId, triggerTimeMs, args.message);
-                        messages.push({
-                            role: 'tool',
-                            tool_call_id: toolCall.id,
-                            name: functionName,
-                            content: `Success: Reminder set for ${args.time}`
-                        });
+                    for (const toolCall of toolCalls) {
+                        const functionName = toolCall.function.name;
+                        const args = JSON.parse(toolCall.function.arguments);
+
+                        if (functionName === 'add_reminder' && chatId) {
+                            const triggerTimeMs = new Date(args.time).getTime();
+                            if (triggerTimeMs && !isNaN(triggerTimeMs)) {
+                                addReminder(chatId, triggerTimeMs, args.message);
+                                messages.push({
+                                    role: 'tool',
+                                    tool_call_id: toolCall.id,
+                                    name: functionName,
+                                    content: `Success: Reminder set for ${args.time}`
+                                });
+                            }
+                        }
                     }
+
+                    // Panggil AI sekali lagi untuk merangkum hasil tool call
+                    const finalCompletion = await client.chat.completions.create({
+                        model: currentModel,
+                        messages,
+                        max_tokens: 1024,
+                    });
+                    console.log(`DEBUG AI Response Final (Model: ${currentModel}):`, JSON.stringify(finalCompletion, null, 2));
+                    return finalCompletion.choices[0]?.message?.content;
                 }
+
+                return responseMessage?.content || 'Maaf, tidak ada response dari AI.';
+                
+            } catch (error) {
+                // Jika error adalah Rate Limit, lanjut ke model berikutnya
+                if (error?.status === 429 || error?.message?.includes('Rate limit') || error?.message?.includes('429')) {
+                    console.warn(`⚠️ Model ${currentModel} limit/penuh! Langsung oper ke model cadangan...`);
+                    continue; 
+                }
+                
+                // Jika error lain, lemparkan keluar
+                throw error;
             }
-
-            // Panggil AI sekali lagi untuk merangkum hasil tool call
-            const finalCompletion = await client.chat.completions.create({
-                model: MODEL,
-                messages,
-                max_tokens: 1024,
-            });
-            return finalCompletion.choices[0]?.message?.content;
         }
-
-        return responseMessage?.content || 'Maaf, tidak ada response dari AI.';
+        
+        // Jika semua model dalam list gagal/limit
+        return 'Maaf bos, semua "otak" AI lagi sibuk atau kena limit. Istirahat bentar ya!';
+        
     } catch (error) {
-        console.error('❌ Groq API Error:', error.message);
-        return 'Maaf, ada error saat memproses request. Coba lagi ya.';
+        console.error('❌ Groq API Error Full Trace:', error);
+        return 'Maaf, ada error internal saat mikir jawaban. Coba lagi ya.';
     }
 }
 
@@ -205,28 +235,44 @@ export function getVoiceUrl(text, lang = 'id') {
 }
 
 export async function getVoiceBuffer(text, lang = 'id') {
+    const tempInput = path.join(os.tmpdir(), `tts_${Date.now()}.mp3`);
+    const tempOutput = path.join(os.tmpdir(), `tts_${Date.now()}.ogg`);
+
     try {
         const url = getVoiceUrl(text, lang);
         if (!url) return null;
 
-        return new Promise((resolve, reject) => {
-            const outStream = new PassThrough();
-            const chunks = [];
-            outStream.on('data', chunk => chunks.push(chunk));
-            outStream.on('end', () => resolve(Buffer.concat(chunks)));
-            outStream.on('error', (err) => reject(err));
+        console.log('🔊 Downloading TTS to temp file...');
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Failed to fetch TTS: ${response.statusText}`);
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        
+        fs.writeFileSync(tempInput, buffer);
 
-            ffmpeg(url)
+        return new Promise((resolve, reject) => {
+            ffmpeg(tempInput)
+                .toFormat('ogg')
                 .audioCodec('libopus')
-                .toFormat('opus')
+                .audioChannels(1)
                 .on('error', (err) => {
                     console.error('❌ FFmpeg Error:', err.message);
+                    if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
+                    if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
                     reject(err);
                 })
-                .pipe(outStream);
+                .on('end', () => {
+                    const outputBuffer = fs.readFileSync(tempOutput);
+                    if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
+                    if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
+                    resolve(outputBuffer);
+                })
+                .save(tempOutput);
         });
     } catch (error) {
         console.error('❌ getVoiceBuffer Error:', error.message);
+        if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
+        if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
         return null;
     }
 }

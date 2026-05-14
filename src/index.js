@@ -5,7 +5,7 @@ import QRCode from 'qrcode-terminal';
 import { handleMessage } from './handlers/message.js';
 import { initDatabase, getPendingReminders, markReminderDone } from './services/db.js';
 
-const logger = P({ level: 'warn' }).child({ class: 'Main' });
+const logger = P({ level: 'info' }).child({ class: 'Main' });
 let reconnectAttempts = 0;
 
 async function startBot() {

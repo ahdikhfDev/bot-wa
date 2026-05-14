@@ -347,7 +347,17 @@ export async function handleMessage(sock, msg) {
                 }
             }
 
-            await sock.sendMessage(remoteJid, { text: response });
+            console.log('DEBUG: Sending response to WhatsApp:', response);
+            try {
+                // Coba kirim dengan me-reply pesan user
+                await sock.sendMessage(remoteJid, { text: response }, { quoted: msg });
+                console.log('DEBUG: Send promise resolved (with quote)!');
+            } catch (sendErr) {
+                console.warn('⚠️ Gagal mengirim dengan quote, mencoba tanpa quote...', sendErr.message);
+                // Jika gagal karena struktur quote error, kirim tanpa quote
+                await sock.sendMessage(remoteJid, { text: response });
+                console.log('DEBUG: Send promise resolved (without quote)!');
+            }
             
             // Opsional: Simpan jawaban bot ke dalam memori grup agar bot ingat apa yang dia katakan
             if (isGroup && GROUP_CONTEXT_ENABLED) {
@@ -393,26 +403,36 @@ function getMessageText(msg) {
 }
 
 function getQuotedText(msg) {
-    const contextInfo = msg.message?.extendedTextMessage?.contextInfo || 
-                        msg.message?.imageMessage?.contextInfo || 
-                        msg.message?.videoMessage?.contextInfo;
-    
+    const msgType = Object.keys(msg.message || {}).find(
+        type => !type.startsWith('contextInfo') && !type.endsWith('MessagePlaceholder')
+    );
+    if (!msgType) return null;
+
+    const contextInfo = msg.message?.[msgType]?.contextInfo;
     const quotedMsg = contextInfo?.quotedMessage;
+    
     if (!quotedMsg) return null;
 
-    const msgType = Object.keys(quotedMsg).find(
+    const quotedType = Object.keys(quotedMsg).find(
         type => !type.startsWith('contextInfo') && !type.endsWith('MessagePlaceholder')
     );
 
-    if (!msgType) return null;
+    if (!quotedType) return null;
 
-    const messageObj = quotedMsg[msgType];
+    const messageObj = quotedMsg[quotedType];
 
     if (messageObj?.text) return messageObj.text;
     if (messageObj?.caption) return messageObj.caption;
     if (typeof messageObj === 'string') return messageObj;
+    
+    // Return placeholders untuk tipe media/file agar AI tahu apa yang sedang di-reply
+    if (quotedType === 'imageMessage') return '[Gambar]';
+    if (quotedType === 'videoMessage') return '[Video]';
+    if (quotedType === 'audioMessage') return '[Voice Note / Audio]';
+    if (quotedType === 'stickerMessage') return '[Stiker]';
+    if (quotedType === 'documentMessage') return `[Dokumen: ${messageObj.title || messageObj.fileName || 'File'}]`;
 
-    return null;
+    return '[Pesan/Media Tidak Dikenal]';
 }
 
 async function sendHelp(sock, jid) {
