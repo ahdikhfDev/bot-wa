@@ -205,6 +205,7 @@ export async function callAI(prompt, history = [], mode = 'asik', chatId = null)
 - Gunakan *bold* SESEKALI — maksimal 1-2 kata per kalimat. Jangan bold seluruh kalimat.
 - Beri jarak antar paragraf.
 - JANGAN ulang saran/kalimat yang sama persis dalam satu percakapan. Kalau user bahas topik yang udah pernah dibahas, kasih sudut pandang BARU.
+- JANGAN pakai LaTeX/math notation ($, \frac, \sqrt, dll). WhatsApp gak render itu. Tulis matematika pake teks biasa: "3/4", "akar 2", "5 2/7".
 
 ${memoriesBlock ? `Gunakan memori di atas sebagai konteks latarbelakang user. Jangan kaku — integrasikan secara natural dalam percakapan.\n\n${memoriesBlock}\n` : ''}`;
 
@@ -395,6 +396,7 @@ export async function callAIVision(prompt, base64Image, mode = 'asik', chatId = 
   Kalau 50/50, default ke Indonesia.
 - Gunakan *bold* SESEKALI — maksimal 1-2 kata per kalimat. Jangan bold seluruh kalimat.
 - JANGAN ulang saran/kalimat yang sama persis dalam satu percakapan. Kalau user bahas topik yang udah pernah dibahas, kasih sudut pandang BARU.
+- JANGAN pakai LaTeX/math notation ($, \frac, \sqrt, dll). WhatsApp gak render itu. Tulis matematika pake teks biasa: "3/4", "akar 2", "5 2/7".
 
 ${memoriesBlock ? `Gunakan memori di atas sebagai konteks latarbelakang user. Jangan kaku — integrasikan secara natural dalam percakapan.\n\n${memoriesBlock}\n` : ''}`;
 
