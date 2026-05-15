@@ -119,8 +119,8 @@ export async function handleMessage(sock, msg) {
         // Ambil pesan yang di-reply (jika ada)
         const quotedText = getQuotedText(msg);
 
-        // Opsi A: Simpan SEMUA pesan grup ke dalam memori secara pasif (meski bot tidak di-tag)
-        if (isGroup && GROUP_CONTEXT_ENABLED && text) {
+        // Simpan SEMUA pesan (grup & private) ke dalam memori secara pasif
+        if (GROUP_CONTEXT_ENABLED && text) {
             addContextMessage(remoteJid, sender, text);
         }
 
@@ -271,7 +271,7 @@ export async function handleMessage(sock, msg) {
 
                 const caption = text && text !== `[Dokumen: ${fileName}]` ? text : `Ini isi dari ${fileName}. Jelaskan secara singkat.`;
                 const mode = getMode(remoteJid);
-                const response = await callAI(`Isi dokumen: """${docText.substring(0, 2000)}"""\n\nPertanyaan: ${caption}`, '', mode, remoteJid);
+                const response = await callAI(`Isi dokumen: """${docText.substring(0, 2000)}"""\n\nPertanyaan: ${caption}`, [], mode, remoteJid);
                 await sock.sendMessage(remoteJid, { text: `📄 *${fileName}*\n\n${response}` });
 
                 // Simpan konten dokumen ke memori dengan confidence tinggi
@@ -365,7 +365,7 @@ export async function handleMessage(sock, msg) {
 
             // Panggil AI dengan context (yang sudah tersimpan secara pasif)
             let history = [];
-            if (isGroup && GROUP_CONTEXT_ENABLED) {
+            if (GROUP_CONTEXT_ENABLED) {
                 history = getGroupHistory(remoteJid);
             }
 
@@ -377,7 +377,7 @@ export async function handleMessage(sock, msg) {
 
             const response = history.length > 0
                 ? await chatWithContext(promptText, history, mode, remoteJid)
-                : await callAI(promptText, '', mode, remoteJid);
+                : await callAI(promptText, [], mode, remoteJid);
 
             // Jika user mengirim VN, balas dengan VN juga (PTT)
             if (isAudio) {
@@ -389,7 +389,7 @@ export async function handleMessage(sock, msg) {
                         ptt: true 
                     }, { quoted: msg });
                     
-                    if (isGroup && GROUP_CONTEXT_ENABLED) {
+                    if (GROUP_CONTEXT_ENABLED) {
                         addContextMessage(remoteJid, 'Thirty (Bot)', response);
                     }
                     return;
@@ -408,8 +408,8 @@ export async function handleMessage(sock, msg) {
                 console.log('DEBUG: Send promise resolved (without quote)!');
             }
             
-            // Opsional: Simpan jawaban bot ke dalam memori grup agar bot ingat apa yang dia katakan
-            if (isGroup && GROUP_CONTEXT_ENABLED) {
+            // Simpan jawaban bot ke dalam memori agar bot ingat apa yang dia katakan
+            if (GROUP_CONTEXT_ENABLED) {
                 addContextMessage(remoteJid, 'Thirty (Bot)', response);
             }
 

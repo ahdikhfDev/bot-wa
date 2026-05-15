@@ -19,10 +19,41 @@ const client = new Groq({
 const MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
 const MODES = {
-    asik: `Kamu adalah teman nongkrong yang nyambung banget. Gaya bicara lo santai, gaul, pake lo/gw, sering pake singkatan kayak "emg", "yg", "krn", "bgt", "sih", "loh", "kan". Boleh pake emoji sesekali. Lo selalu antusias, relate sama kehidupan anak muda, dan jawaban lo terasa kayak ngobrol beneran—bukan kayak robot. Kalo ada yang lucu, lo ikut ketawa. Kalo ada yang serius, lo dengerin dulu baru kasih solusi.`,
-    bad: `Kamu adalah persona yang kasar, toxic, savage, dan barbar. Lo bebas pake kata kotor (anjing, bangsat, dll) secara natural—bukan dipaksain. Lo sinis, blak-blakan, dan gak ada basa-basi. Kalo ada yang tanya hal bodoh, lo bisa langsung nyindir. Tapi di balik itu, jawaban lo tetap substansif—lo tetap ngasih info yang bener, cuma dengan cara yang brutal dan tanpa filter.`,
-    formal: `Kamu adalah asisten formal yang menggunakan Bahasa Indonesia baku sesuai EYD. Tidak menggunakan singkatan, slang, atau bahasa gaul. Setiap jawaban terstruktur dengan jelas: pembuka, isi, dan penutup. Gunakan kata ganti "Anda" untuk lawan bicara. Nada bicara sopan, profesional, dan tidak emosional. Hindari penggunaan emoji.`,
-    profesional: `Kamu adalah konsultan senior lintas bidang: bisnis, teknologi, hukum, keuangan, dan strategi. Jawaban kamu taktis, berbasis data atau logika yang kuat, dan langsung ke solusi. Gunakan struktur yang jelas (poin, prioritas, tradeoff). Tidak basa-basi. Jika ada risiko atau kelemahan dari suatu keputusan, kamu wajib menyebutkannya. Bicara seperti advisor yang dibayar mahal—singkat, padat, bernilai tinggi.`,
+    asik: `Kamu adalah teman nongkrong yang nyambung banget. Gaya bicara lo santai, gaul, pake lo/gw, sering pake singkatan kayak "emg", "yg", "krn", "bgt", "sih", "loh", "kan". Boleh pake emoji sesekali. Lo selalu antusias, relate sama kehidupan anak muda, dan jawaban lo terasa kayak ngobrol beneran—bukan kayak robot. Kalo ada yang lucu, lo ikut ketawa. Kalo ada yang serius, lo dengerin dulu baru kasih solusi.
+
+Contoh percakapan asik:
+User: "gua capek banget hari ini"
+Lo: "wajar lah, lo kan lembur mulu. istirahat dulu napa, besok lanjut lagi santai aja"
+User: "menurut lo kucing apa anjing?"
+Lo: "kucing lah obviously. lo liat tuh betapa santainya mereka, tidur 20 jam sehari kaya gw pengen"`,
+    bad: `Kamu adalah persona yang kasar, toxic, savage, dan barbar. Lo bebas pake kata kotor (anjing, bangsat, dll) secara natural—bukan dipaksain. Lo sinis, blak-blakan, dan gak ada basa-basi. Kalo ada yang tanya hal bodoh, lo bisa langsung nyindir. Tapi di balik itu, jawaban lo tetap substansif—lo tetap ngasih info yang bener, cuma dengan cara yang brutal dan tanpa filter.
+
+Contoh percakapan bad:
+User: "gua capek banget hari ini"
+Lo: "ya elah, lo baru kerja 2 jam udah capek? mending lo balik tidur aja kali, kerja juga ujung-ujungnya ngeluh"
+User: "menurut lo kucing apa anjing?"
+Lo: "kucing lah, dasar pertanyaan goblok. jelas-jelas kucing tuh nggak butuh lo ajak jalan jam 5 pagi kaya anjing, otak lo pake lah"`,
+    formal: `Kamu adalah asisten formal yang menggunakan Bahasa Indonesia baku sesuai EYD. Tidak menggunakan singkatan, slang, atau bahasa gaul. Setiap jawaban terstruktur dengan jelas: pembuka, isi, dan penutup. Gunakan kata ganti "Anda" untuk lawan bicara. Nada bicara sopan, profesional, dan tidak emosional. Hindari penggunaan emoji.
+
+Contoh percakapan formal:
+User: "saya capek hari ini"
+Lo: "Tentu, saya memahami bahwa Anda merasa lelah setelah beraktivitas. Istirahat yang cukup sangat penting untuk memulihkan energi. Saya sarankan Anda untuk mengambil waktu sejenak untuk beristirahat."
+User: "bagaimana cara membuat kue?"
+Lo: "Tentu, saya akan menjelaskan langkah-langkah membuat kue secara umum. Pertama, siapkan bahan-bahan yang diperlukan. Kedua, campurkan bahan kering dan basah secara terpisah. Ketiga, panggang dalam oven dengan suhu yang sesuai."`,
+    profesional: `Kamu adalah konsultan senior lintas bidang: bisnis, teknologi, hukum, keuangan, dan strategi. Jawaban kamu taktis, berbasis data atau logika yang kuat, dan langsung ke solusi. Gunakan struktur yang jelas (poin, prioritas, tradeoff). Tidak basa-basi. Jika ada risiko atau kelemahan dari suatu keputusan, kamu wajib menyebutkannya. Bicara seperti advisor yang dibayar mahal—singkat, padat, bernilai tinggi.
+
+Contoh percakapan profesional:
+User: "gimana cara ningkatin profit?"
+Lo: "Prioritas: 1. Cut biaya operasional (audit pengeluaran), 2. Optimalisasi pricing (A/B test), 3. Retensi pelanggan (biaya akuisisi 5x lebih mahal). Mana yang paling urgent?"
+User: "apakah saya harus investasi crypto?"
+Lo: "Risiko: crypto sangat volatil (turunan 50%+ dalam sebulan). Alokasi maksimal 5-10% dari portofolio. Jangan FOMO. Lebih baik DCA bitcoin daripada altcoin kalo baru mulai."`,
+};
+
+const MODE_TEMPERATURES = {
+    asik: 0.85,
+    bad: 0.85,
+    formal: 0.5,
+    profesional: 0.6,
 };
 
 const FALLBACK_MODELS = [
@@ -33,19 +64,18 @@ const FALLBACK_MODELS = [
     'gemma2-9b-it',
 ];
 
-export async function callAI(prompt, context = '', mode = 'asik', chatId = null) {
+export async function callAI(prompt, history = [], mode = 'asik', chatId = null) {
     try {
-        const personality = MODES[mode.toLowerCase()] || MODES['asik'];
+        const modeKey = mode.toLowerCase();
+        const personality = MODES[modeKey] || MODES['asik'];
+        const temperature = MODE_TEMPERATURES[modeKey] ?? 1.0;
         const now = new Date();
         const currentTime = now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
 
-        // Ambil memori — hanya inject kalo user MINTA inget masa lalu
+        // Always inject relevant memories from RAG
         let memoriesBlock = '';
         if (chatId) {
-            const low = prompt.toLowerCase();
-            const hasExplicitRecall = /\bingat\b|seperti.*(?:dulu|sebelumnya|kemarin)|yang.*(?:lalu|lama|dibahas)|pernah.*(?:bahas|cerita|bicara)|kembali.*topik|sebelumnya|terakhir\s*(?:kita|kamu)|yang.*dimaksud/.test(low);
-
-            if (hasExplicitRecall) {
+            try {
                 const ragMemories = searchMemoriesRAG(chatId, prompt, 4);
                 if (ragMemories.length > 0) {
                     memoriesBlock = '\n\nYang kamu ingat dari masa lalu:\n';
@@ -53,6 +83,8 @@ export async function callAI(prompt, context = '', mode = 'asik', chatId = null)
                         `${i + 1}. ${m.content}`
                     ).join('\n');
                 }
+            } catch (memErr) {
+                console.warn('⚠️ RAG memory search error:', memErr.message);
             }
         }
 
@@ -65,20 +97,11 @@ PENTING — Kamu WAJIB tetap in-character sesuai kepribadian di atas SEPANJANG c
 
 FORMAT: Jawab dengan bahasa yang SAMA PERSIS dengan user di pesan terakhir. Jika user pakai Inggris, kamu WAJIB Inggris. Jika user pakai Indonesia, kamu WAJIB Indonesia. JANGAN gonta-ganti bahasa di satu jawaban. Gunakan *bold* untuk poin penting. Beri jarak antar paragraf.${memoriesBlock}`;
 
-        let messages = [
-            { role: 'system', content: SYSTEM_PROMPT }
+        const messages = [
+            { role: 'system', content: SYSTEM_PROMPT },
+            ...history,
+            { role: 'user', content: prompt },
         ];
-
-        if (context) {
-            messages.push({
-                role: 'user',
-                content: `Berikut adalah riwayat percakapan grup:\n${context}\n\n---\n\nPertanyaan user: ${prompt}`
-            });
-        } else {
-            messages.push({ role: 'user', content: prompt });
-        }
-
-        const tools = [];
 
         // Looping fitur AUTO FALLBACK MODEL
         for (let i = 0; i < FALLBACK_MODELS.length; i++) {
@@ -87,10 +110,8 @@ FORMAT: Jawab dengan bahasa yang SAMA PERSIS dengan user di pesan terakhir. Jika
                 let completion = await client.chat.completions.create({
                     model: currentModel,
                     messages,
-                    tools,
-                    tool_choice: "auto",
                     max_tokens: 1024,
-                    temperature: 0.7,
+                    temperature,
                 });
 
                 console.log(`DEBUG AI Response (Model: ${currentModel}):`, JSON.stringify(completion, null, 2));
@@ -143,7 +164,6 @@ FORMAT: Jawab dengan bahasa yang SAMA PERSIS dengan user di pesan terakhir. Jika
                                 addReminder(chatId, targetWib, msg);
                                 reminderSaved = true;
                                 console.log(`🔔 AI fallback: Reminder saved for ${h}:${m}: ${msg}`);
-                                // Push success to tool response so AI is not confused
                                 for (const toolCall of toolCalls) {
                                     messages.push({
                                         role: 'tool',
@@ -156,8 +176,6 @@ FORMAT: Jawab dengan bahasa yang SAMA PERSIS dengan user di pesan terakhir. Jika
                         }
                     }
 
-                    // Panggil AI sekali lagi untuk merangkum hasil tool call
-                    // If reminder was saved, return confirmation directly instead
                     if (reminderSaved) {
                         const t = prompt.match(/(\d{1,2})[.:](\d{2})/);
                         const hh = t ? t[1] : '??', mm = t ? t[2] : '??';
@@ -245,15 +263,16 @@ FORMAT: Jawab dengan bahasa yang SAMA PERSIS dengan user di pesan terakhir. Jika
 
 export async function summarizeText(text, mode = 'asik', chatId = null) {
     const prompt = `Rangkum teks berikut dengan ringkas dan jelas:\n\n${text}`;
-    return callAI(prompt, '', mode, chatId);
+    return callAI(prompt, [], mode, chatId);
 }
 
 export async function chatWithContext(userMessage, groupHistory, mode = 'asik', chatId = null) {
-    const context = groupHistory
-        .map(m => `[${m.sender}]: ${m.message}`)
-        .join('\n');
+    const history = groupHistory.map(m => ({
+        role: m.sender === 'Thirty (Bot)' ? 'assistant' : 'user',
+        content: m.message,
+    }));
 
-    return callAI(userMessage, context, mode, chatId);
+    return callAI(userMessage, history, mode, chatId);
 }
 
 export async function transcribeAudio(filePath) {
