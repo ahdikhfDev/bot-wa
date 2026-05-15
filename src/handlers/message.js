@@ -219,7 +219,7 @@ export async function handleMessage(sock, msg) {
                 
                 // Gunakan caption pesan (jika ada) sebagai prompt untuk Vision
                 const prompt = (text && text !== '[Gambar]') ? text : null;
-                const response = await callAIVision(prompt, base64Image, mode);
+                const response = await callAIVision(prompt, base64Image, mode, remoteJid);
                 
                 await sock.sendMessage(remoteJid, { text: response });
                 return; // Berhenti di sini untuk pesan gambar
@@ -414,7 +414,7 @@ export async function handleMessage(sock, msg) {
             }
 
             // LEARNING ENGINE: Track interactions & extract memories periodically
-            if (isGroup && GROUP_CONTEXT_ENABLED) {
+            if (GROUP_CONTEXT_ENABLED) {
                 incrementInteractionCount(remoteJid);
                 const count = getInteractionCount(remoteJid);
                 const interval = getLearningInterval();
@@ -451,10 +451,51 @@ export async function handleMessage(sock, msg) {
 function extractReminder(text) {
     if (!text) return null;
     const lower = text.toLowerCase();
-
     const hasReminderKeyword = /(?:ng)?ing(?:at|et)|reminder/i.test(lower);
     if (!hasReminderKeyword) return null;
 
+    const nowUtc = Date.now();
+    const WIB_MS = 7 * 3600000;
+
+    // Helper: ambil teks message (bersihin keyword)
+    function cleanMsg(t, timeStr) {
+        return t
+            .replace(timeStr, '')
+            .replace(/thirty\s*/i, '')
+            .replace(/(?:jam|pukul)\s*/i, '')
+            .replace(/(?:ng)?ing(?:at|et)(?:kan|in|inin)?(?:\s+(?:saya|aku|gw|gue|lo|lu|elu))?\s*/i, '')
+            .replace(/\breminder\s*/i, '')
+            .replace(/\s+(buat|untuk|supaya|biar)\s+/i, ' ')
+            .replace(/\s+/g, ' ')
+            .trim() || 'Ada tugas/pekerjaan';
+    }
+
+    // 1. Relative time: "N menit/jam lagi"
+    const relMatch = lower.match(/(\d+)\s*(menit|jam)\s*(lagi|ke depan|from now)?/i);
+    if (relMatch) {
+        const amount = parseInt(relMatch[1]);
+        const unit = relMatch[2].toLowerCase();
+        const ms = unit === 'jam' ? amount * 3600000 : amount * 60000;
+        const triggerTimeMs = nowUtc + ms;
+        const message = cleanMsg(text, relMatch[0]);
+        const d = new Date(triggerTimeMs + WIB_MS);
+        const hours = d.getUTCHours();
+        const minutes = d.getUTCMinutes();
+        console.log(`🧠 extractReminder (relative): \"${text}\" → \"${message}\" in ${amount} ${unit}`);
+        return { triggerTimeMs, message, hours, minutes };
+    }
+
+    // 2. Day reference + time: "besok jam 7", "nanti malem jam 8", "lusa jam 14:30"
+    const dayKeywords = { besok: 1, lusa: 2, 'nanti': 0 };
+    let dayOffset = 0;
+    for (const [word, offset] of Object.entries(dayKeywords)) {
+        if (lower.includes(word)) {
+            dayOffset = offset;
+            break;
+        }
+    }
+
+    // 3. Absolute time: HH:MM
     const timePattern = /(\d{1,2})[.:](\d{2})/;
     const timeMatch = text.match(timePattern);
     if (!timeMatch) return null;
@@ -463,26 +504,13 @@ function extractReminder(text) {
     const minutes = parseInt(timeMatch[2]);
     if (hours > 23 || minutes > 59) return null;
 
-    let message = text
-        .replace(/\d{1,2}[.:]\d{2}/, '')
-        .replace(/thirty\s*/i, '')
-        .replace(/(?:jam|pukul)\s*/i, '')
-        .replace(/(?:ng)?ing(?:at|et)(?:kan|in|inin)?(?:\s+(?:saya|aku|gw|gue|lo|lu|elu))?\s*/i, '')
-        .replace(/\breminder\s*/i, '')
-        .replace(/\s+(buat|untuk|supaya|biar)\s+/i, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+    const d = new Date(nowUtc + WIB_MS);
+    let targetWib = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + dayOffset, hours, minutes, 0) - WIB_MS;
+    if (targetWib <= nowUtc && dayOffset === 0) targetWib += 86400000;
 
-    if (!message) message = 'Ada tugas/pekerjaan';
+    const message = cleanMsg(text, timeMatch[0]);
 
-    // WIB timezone fix: server UTC, user WIB (UTC+7)
-    const WIB_MS = 7 * 3600000;
-    const nowUtc = Date.now();
-    const d = new Date(nowUtc + WIB_MS); // date components in WIB
-    let targetWib = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hours, minutes, 0) - WIB_MS;
-    if (targetWib <= nowUtc) targetWib += 86400000;
-
-    console.log(`🧠 extractReminder: \"${text}\" → \"${message}\" at ${hours}:${minutes} WIB`);
+    console.log(`🧠 extractReminder: \"${text}\" → \"${message}\" at ${hours}:${minutes} WIB${dayOffset > 0 ? ` +${dayOffset} day` : ''}`);
     return { triggerTimeMs: targetWib, message, hours, minutes };
 }
 

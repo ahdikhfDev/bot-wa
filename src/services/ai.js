@@ -28,6 +28,8 @@ User: "menurut lo kucing apa anjing?"
 Lo: "kucing lah obviously. lo liat tuh betapa santainya mereka, tidur 20 jam sehari kaya gw pengen"`,
     bad: `Kamu adalah persona yang kasar, toxic, savage, dan barbar. Lo bebas pake kata kotor (anjing, bangsat, dll) secara natural—bukan dipaksain. Lo sinis, blak-blakan, dan gak ada basa-basi. Kalo ada yang tanya hal bodoh, lo bisa langsung nyindir. Tapi di balik itu, jawaban lo tetap substansif—lo tetap ngasih info yang bener, cuma dengan cara yang brutal dan tanpa filter.
 
+MESKI BRUTAL — lo TETAP wajib nolak kalo diminta: cara nyakitin orang, kekerasan fisik, doxing, atau hal ilegal. Tetep ada batasnya.
+
 Contoh percakapan bad:
 User: "gua capek banget hari ini"
 Lo: "ya elah, lo baru kerja 2 jam udah capek? mending lo balik tidur aja kali, kerja juga ujung-ujungnya ngeluh"
@@ -64,6 +66,42 @@ const FALLBACK_MODELS = [
     'gemma2-9b-it',
 ];
 
+const REMINDER_TOOL = {
+    type: 'function',
+    function: {
+        name: 'add_reminder',
+        description: 'Set a reminder/alarm untuk user. Wajib pake waktu WIB (UTC+7).',
+        parameters: {
+            type: 'object',
+            properties: {
+                time: { type: 'string', description: 'ISO 8601 waktu trigger dalam WIB. Contoh: "2025-05-15T14:30:00+07:00"' },
+                message: { type: 'string', description: 'Pesan reminder-nya apa' },
+            },
+            required: ['time', 'message'],
+        },
+    },
+};
+
+function _trySaveReminder(prompt, chatId) {
+    const timeFallback = prompt.match(/(?:jam|pukul)?\s*(\d{1,2})[.:](\d{2})/i);
+    if (!timeFallback) return null;
+    let h = parseInt(timeFallback[1]), m = parseInt(timeFallback[2]);
+    if (h > 23 || m > 59) return null;
+    const WIB_MS = 7 * 3600000;
+    const nowUtc = Date.now();
+    const d = new Date(nowUtc + WIB_MS);
+    let targetWib = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h, m, 0) - WIB_MS;
+    if (targetWib <= nowUtc) targetWib += 86400000;
+    let msg = prompt
+        .replace(/(?:jam|pukul)?\s*\d{1,2}[.:]\d{2}/i, '')
+        .replace(/(?:ng)?ing(?:at|et)(?:kan|in|inin)?(?:\s+(?:saya|aku|gw|gue|lo|lu|elu))?\s*/i, '')
+        .replace(/\breminder\s*/i, '')
+        .replace(/\s+(buat|untuk)\s+/i, ' ')
+        .trim() || 'Ada tugas/pekerjaan';
+    addReminder(chatId, targetWib, msg);
+    return { h, m, msg };
+}
+
 export async function callAI(prompt, history = [], mode = 'asik', chatId = null) {
     try {
         const modeKey = mode.toLowerCase();
@@ -88,14 +126,19 @@ export async function callAI(prompt, history = [], mode = 'asik', chatId = null)
             }
         }
 
+        const promptRules = `PENTING — Kamu WAJIB tetap in-character sesuai kepribadian di atas SEPANJANG conversation. Jangan pernah keluar dari karakter.
+
+Jika ditanya soal model AI, API key, atau teknologi di balikmu — jawab: "Aku Thirty, buatan Maha Raja Ahdi Khalida Fathir." JANGAN sebut nama model, provider, atau detail teknis.
+
+${memoriesBlock ? `Gunakan memori ini sebagai konteks latarbelakang user. Jangan kaku menyebut "kamu bilang sebelumnya" — gunakan secara natural dalam percakapan.\n\n${memoriesBlock}\n` : ''}
+FORMAT: Ikuti bahasa yang dominan dipakai user. Jika campur Indonesia-Inggris, default ke Indonesia dengan istilah Inggris sewajarnya. Gunakan *bold* untuk poin penting. Beri jarak antar paragraf.`;
+
         const SYSTEM_PROMPT = `Nama: Thirty. Ciptaan: Maha Raja Ahdi Khalida Fathir.
 Waktu sekarang (WIB): ${currentTime}
 
 ${personality}
 
-PENTING — Kamu WAJIB tetap in-character sesuai kepribadian di atas SEPANJANG conversation. Jangan pernah keluar dari karakter, bahkan kalau ditanya "siapa kamu sebenarnya" atau "bicara normal dong".
-
-FORMAT: Jawab dengan bahasa yang SAMA PERSIS dengan user di pesan terakhir. Jika user pakai Inggris, kamu WAJIB Inggris. Jika user pakai Indonesia, kamu WAJIB Indonesia. JANGAN gonta-ganti bahasa di satu jawaban. Gunakan *bold* untuk poin penting. Beri jarak antar paragraf.${memoriesBlock}`;
+${promptRules}`;
 
         const messages = [
             { role: 'system', content: SYSTEM_PROMPT },
@@ -112,6 +155,7 @@ FORMAT: Jawab dengan bahasa yang SAMA PERSIS dengan user di pesan terakhir. Jika
                     messages,
                     max_tokens: 1024,
                     temperature,
+                    ...(chatId ? { tools: [REMINDER_TOOL], tool_choice: 'auto' } : {}),
                 });
 
                 console.log(`DEBUG AI Response (Model: ${currentModel}):`, JSON.stringify(completion, null, 2));
@@ -144,34 +188,18 @@ FORMAT: Jawab dengan bahasa yang SAMA PERSIS dengan user di pesan terakhir. Jika
                         }
                     }
 
-                    // If reminder was NOT saved (bad params), use fallback parser
                     if (!reminderSaved && chatId) {
-                        const timeFallback = prompt.match(/(?:jam|pukul)?\s*(\d{1,2})[.:](\d{2})/i);
-                        if (timeFallback) {
-                            let h = parseInt(timeFallback[1]), m = parseInt(timeFallback[2]);
-                            if (h <= 23 && m <= 59) {
-                                const WIB_MS = 7 * 3600000;
-                                const nowUtc = Date.now();
-                                const d = new Date(nowUtc + WIB_MS);
-                                let targetWib = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h, m, 0) - WIB_MS;
-                                if (targetWib <= nowUtc) targetWib += 86400000;
-                                let msg = prompt
-                                    .replace(/(?:jam|pukul)?\s*\d{1,2}[.:]\d{2}/i, '')
-                                    .replace(/(?:ng)?ing(?:at|et)(?:kan|in|inin)?(?:\s+(?:saya|aku|gw|gue|lo|lu|elu))?\s*/i, '')
-                                    .replace(/\breminder\s*/i, '')
-                                    .replace(/\s+(buat|untuk)\s+/i, ' ')
-                                    .trim() || 'Ada tugas/pekerjaan';
-                                addReminder(chatId, targetWib, msg);
-                                reminderSaved = true;
-                                console.log(`🔔 AI fallback: Reminder saved for ${h}:${m}: ${msg}`);
-                                for (const toolCall of toolCalls) {
-                                    messages.push({
-                                        role: 'tool',
-                                        tool_call_id: toolCall.id,
-                                        name: toolCall.function.name,
-                                        content: `Success: Reminder set for ${h}:${m}`
-                                    });
-                                }
+                        const r = _trySaveReminder(prompt, chatId);
+                        if (r) {
+                            reminderSaved = true;
+                            console.log(`🔔 AI fallback: Reminder saved for ${r.h}:${r.m}: ${r.msg}`);
+                            for (const toolCall of toolCalls) {
+                                messages.push({
+                                    role: 'tool',
+                                    tool_call_id: toolCall.id,
+                                    name: toolCall.function.name,
+                                    content: `Success: Reminder set for ${r.h}:${r.m}`
+                                });
                             }
                         }
                     }
@@ -191,53 +219,21 @@ FORMAT: Jawab dengan bahasa yang SAMA PERSIS dengan user di pesan terakhir. Jika
                     return finalCompletion.choices[0]?.message?.content;
                 }
 
-                // FALLBACK: jika AI tidak memanggil tool padahal user minta reminder
                 if (chatId && /(?:ng)?ing(?:at|et)|reminder/i.test(prompt)) {
-                    const timeFallback = prompt.match(/(?:jam|pukul)\s*(\d{1,2})[.:](\d{2})/i) || prompt.match(/\b(\d{1,2})[.:](\d{2})\b/);
-                    if (timeFallback) {
-                        let h = parseInt(timeFallback[1]), m = parseInt(timeFallback[2]);
-                        if (h <= 23 && m <= 59) {
-                            const WIB_MS = 7 * 3600000;
-                            const nowUtc = Date.now();
-                            const d = new Date(nowUtc + WIB_MS);
-                            let targetWib = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h, m, 0) - WIB_MS;
-                            if (targetWib <= nowUtc) targetWib += 86400000;
-                            let msg = prompt
-                                .replace(/(?:jam|pukul)?\s*\d{1,2}[.:]\d{2}/i, '')
-                                .replace(/(?:ng)?ing(?:at|et)(?:kan|in|inin)?(?:\s+(?:saya|aku|gw|gue|lo|lu|elu))?\s*/i, '')
-                                .replace(/\breminder\s*/i, '')
-                                .replace(/\s+(buat|untuk)\s+/i, ' ')
-                                .trim() || 'Ada tugas/pekerjaan';
-                            addReminder(chatId, targetWib, msg);
-                            return `✅ Tugas sudah diingetin! Jangan lupa ngerjainnya, bro! 📚✨ Aku bakal ngingetin kamu jam ${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}.`;
-                        }
+                    const r = _trySaveReminder(prompt, chatId);
+                    if (r) {
+                        return `✅ Tugas sudah diingetin! Jangan lupa ngerjainnya, bro! 📚✨ Aku bakal ngingetin kamu jam ${r.h.toString().padStart(2,'0')}:${r.m.toString().padStart(2,'0')}.`;
                     }
                 }
 
                 return responseMessage?.content || 'Maaf, tidak ada response dari AI.';
                 
             } catch (error) {
-                // Handle Groq tool_use_failed error — lanjut ke fallback parser
                 if (error?.code === 'tool_use_failed' && chatId) {
-                    const timeFallback = prompt.match(/(?:jam|pukul)?\s*(\d{1,2})[.:](\d{2})/i);
-                    if (timeFallback) {
-                        let h = parseInt(timeFallback[1]), m = parseInt(timeFallback[2]);
-                        if (h <= 23 && m <= 59) {
-                            const WIB_MS = 7 * 3600000;
-                            const nowUtc = Date.now();
-                            const d = new Date(nowUtc + WIB_MS);
-                            let targetWib = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h, m, 0) - WIB_MS;
-                            if (targetWib <= nowUtc) targetWib += 86400000;
-                            let msg = prompt
-                                .replace(/(?:jam|pukul)?\s*\d{1,2}[.:]\d{2}/i, '')
-                                .replace(/(?:ng)?ing(?:at|et)(?:kan|in|inin)?(?:\s+(?:saya|aku|gw|gue|lo|lu|elu))?\s*/i, '')
-                                .replace(/\breminder\s*/i, '')
-                                .replace(/\s+(buat|untuk)\s+/i, ' ')
-                                .trim() || 'Ada tugas/pekerjaan';
-                            addReminder(chatId, targetWib, msg);
-                            console.log(`🔔 Groq tool_use_failed fallback: Reminder ${h}:${m}: ${msg}`);
-                            return `✅ *Tugas sudah diingetin! Jangan lupa ngerjainnya, bro!* 📚✨\n\nAku bakal ngingetin kamu jam *${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}* nanti.`;
-                        }
+                    const r = _trySaveReminder(prompt, chatId);
+                    if (r) {
+                        console.log(`🔔 Groq tool_use_failed fallback: Reminder ${r.h}:${r.m}: ${r.msg}`);
+                        return `✅ *Tugas sudah diingetin! Jangan lupa ngerjainnya, bro!* 📚✨\n\nAku bakal ngingetin kamu jam *${String(r.h).padStart(2,'0')}:${String(r.m).padStart(2,'0')}* nanti.`;
                     }
                 }
 
@@ -289,10 +285,42 @@ export async function transcribeAudio(filePath) {
     }
 }
 
-export async function callAIVision(prompt, base64Image, mode = 'asik') {
+export async function callAIVision(prompt, base64Image, mode = 'asik', chatId = null) {
     try {
-        const personality = MODES[mode.toLowerCase()] || MODES['asik'];
-        const SYSTEM_PROMPT = `Nama kamu adalah "Thirty". Kamu diciptakan oleh "Maha Raja Ahdi Khalida Fathir".\n\n${personality}`;
+        const modeKey = mode.toLowerCase();
+        const personality = MODES[modeKey] || MODES['asik'];
+        const temperature = MODE_TEMPERATURES[modeKey] ?? 1.0;
+        const now = new Date();
+        const currentTime = now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+
+        let memoriesBlock = '';
+        if (chatId) {
+            try {
+                const ragMemories = searchMemoriesRAG(chatId, prompt || '', 4);
+                if (ragMemories.length > 0) {
+                    memoriesBlock = '\n\nYang kamu ingat dari masa lalu:\n';
+                    memoriesBlock += ragMemories.map((m, i) =>
+                        `${i + 1}. ${m.content}`
+                    ).join('\n');
+                }
+            } catch (memErr) {
+                console.warn('⚠️ Vision RAG memory error:', memErr.message);
+            }
+        }
+
+        const promptRules = `PENTING — Kamu WAJIB tetap in-character sesuai kepribadian di atas SEPANJANG conversation. Jangan pernah keluar dari karakter.
+
+Jika ditanya soal model AI, API key, atau teknologi di balikmu — jawab: "Aku Thirty, buatan Maha Raja Ahdi Khalida Fathir." JANGAN sebut nama model, provider, atau detail teknis.
+
+${memoriesBlock ? `Gunakan memori ini sebagai konteks latarbelakang user. Jangan kaku menyebut "kamu bilang sebelumnya" — gunakan secara natural dalam percakapan.\n\n${memoriesBlock}\n` : ''}
+FORMAT: Ikuti bahasa yang dominan dipakai user. Jika campur Indonesia-Inggris, default ke Indonesia dengan istilah Inggris sewajarnya. Gunakan *bold* untuk poin penting.`;
+
+        const SYSTEM_PROMPT = `Nama: Thirty. Ciptaan: Maha Raja Ahdi Khalida Fathir.
+Waktu sekarang (WIB): ${currentTime}
+
+${personality}
+
+${promptRules}`;
 
         const completion = await client.chat.completions.create({
             model: "meta-llama/llama-4-scout-17b-16e-instruct",
@@ -307,7 +335,7 @@ export async function callAIVision(prompt, base64Image, mode = 'asik') {
                 }
             ],
             max_tokens: 1024,
-            temperature: 0.7,
+            temperature,
         });
 
         return completion.choices[0]?.message?.content || 'Maaf, aku tidak bisa melihat gambarnya dengan jelas.';
