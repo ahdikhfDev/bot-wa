@@ -1,3 +1,5 @@
+import { formatKeyValue } from '../utils/waformat.js';
+
 const UA = 'ThirtyBot/1.0';
 
 // wttr.in — gratis, no API key
@@ -72,12 +74,14 @@ export async function getWeather(city) {
 export function formatWeather(w) {
     if (w.error) return w.error;
 
-    return `🌤️ *Cuaca ${w.city}* 🌤️
+    const items = formatKeyValue([
+        { key: '🌡️ Suhu', val: `${w.temp}°C (terasa ${w.feelsLike}°C)` },
+        { key: '☁️ Kondisi', val: w.desc },
+        { key: '💧 Kelembaban', val: `${w.humidity}%` },
+        { key: '💨 Angin', val: `${w.windSpeed} km/j (${w.windDir})` },
+        { key: '👁️ Jarak Pandang', val: `${w.visibility} km` },
+        { key: '☀️ UV Index', val: `${w.uvIndex}` },
+    ]);
 
-🌡️ Suhu: *${w.temp}°C* (terasa ${w.feelsLike}°C)
-☁️ Kondisi: ${w.desc}
-💧 Kelembaban: ${w.humidity}%
-💨 Angin: ${w.windSpeed} km/j (${w.windDir})
-👁️ Jarak pandang: ${w.visibility} km
-☀️ UV Index: ${w.uvIndex}`;
+    return `🌤️ *Cuaca ${w.city}* 🌤️\n\n${items}`;
 }

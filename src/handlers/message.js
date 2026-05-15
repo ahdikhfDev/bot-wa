@@ -256,6 +256,10 @@ export async function handleMessage(sock, msg) {
                     await parser.load();
                     const allText = await parser.getText();
                     docText = (allText?.text || '').substring(0, 3000);
+                } else if (fileName.toLowerCase().endsWith('.docx')) {
+                    const mammoth = await import('mammoth');
+                    const result = await mammoth.extractRawText({ buffer });
+                    docText = (result.value || '').substring(0, 3000);
                 } else {
                     docText = buffer.toString('utf-8').substring(0, 3000);
                 }
@@ -305,15 +309,25 @@ export async function handleMessage(sock, msg) {
             'reset': () => cmd.cmdReset(sock, remoteJid, isOwner, isGroup),
             'search': () => cmd.cmdSearch(sock, remoteJid, args),
             'cari': () => cmd.cmdSearch(sock, remoteJid, args),
-            'translate': () => cmd.cmdTranslate(sock, remoteJid, args),
-            'tr': () => cmd.cmdTranslate(sock, remoteJid, args),
-            'terjemahkan': () => cmd.cmdTranslate(sock, remoteJid, args),
+            'translate': () => cmd.cmdTranslate(sock, remoteJid, args, quotedText),
+            'tr': () => cmd.cmdTranslate(sock, remoteJid, args, quotedText),
+            'terjemahkan': () => cmd.cmdTranslate(sock, remoteJid, args, quotedText),
             'weather': () => cmd.cmdWeather(sock, remoteJid, args),
             'cuaca': () => cmd.cmdWeather(sock, remoteJid, args),
             'broadcast': () => cmd.cmdBroadcast(sock, remoteJid, args, text),
             'bc': () => cmd.cmdBroadcast(sock, remoteJid, args, text),
             'template': () => cmd.cmdTemplate(sock, remoteJid, args, text),
             'tpl': () => cmd.cmdTemplate(sock, remoteJid, args, text),
+            'kurs': () => cmd.cmdKurs(sock, remoteJid, args),
+            'rate': () => cmd.cmdKurs(sock, remoteJid, args),
+            'hn': () => cmd.cmdHN(sock, remoteJid),
+            'hackernews': () => cmd.cmdHN(sock, remoteJid),
+            'tv': () => cmd.cmdTV(sock, remoteJid, args),
+            'tvshow': () => cmd.cmdTV(sock, remoteJid, args),
+            'ip': () => cmd.cmdIP(sock, remoteJid),
+            'ipinfo': () => cmd.cmdIP(sock, remoteJid),
+            'qr': () => cmd.cmdQR(sock, remoteJid, args),
+            'qrcode': () => cmd.cmdQR(sock, remoteJid, args),
         };
 
         if (command && dispatch[command]) {
@@ -530,7 +544,11 @@ async function sendHelp(sock, jid) {
 Halo! Saya adalah *Thirty*, asisten AI cerdas yang siap membantu kebutuhanmu. 🤖🦾
 
 🤖 *PENGATURAN AI*
-• 🎨 */mode* : Ganti kepribadian (bad, formal, profesional, asik)
+• 🎨 */mode* : Ganti kepribadian (asik, bad, formal, profesional)
+   asik → teman nongkrong, santai, gaul
+   bad → kasar, toxic, savage
+   formal → baku, sopan, EYD
+   profesional → konsultan senior, taktis
 
 🛠️ *FITUR MULTIMEDIA & SEARCH*
 • 🔍 */search* atau "cari [query]" : Cari info di web
@@ -543,7 +561,12 @@ Halo! Saya adalah *Thirty*, asisten AI cerdas yang siap membantu kebutuhanmu. �
 
 🌍 *FITUR UTILITY*
 • 🌤️ */cuaca [kota]* : Cek cuaca (atau */weather*)
-• 🌍 */translate [teks]* : Terjemahkan ke Indonesia
+• 💱 */kurs [dari] [ke]* : Kurs mata uang (contoh: /kurs usd idr)
+• 📰 */hn* atau */hackernews* : Berita teknologi teratas
+• 📺 */tv [judul]* : Cari info acara TV
+• 🌐 */ip* : Cek IP publik
+• 🔳 */qr [teks]* : Generate QR code
+• 🌍 */translate [teks]* : Terjemahkan ke Indonesia (atau reply + /tr)
 • 🧠 *Auto Learning* : Bot belajar dari percakapan — makin ngobrol makin pinter
 • 🧠 *RAG Memory* : Bot ingat topik lama & konten dokumen
 • 📝 */rangkum [teks]* : Ringkas teks panjang

@@ -4,31 +4,30 @@ import { getWeather, formatWeather } from '../services/weather.js';
 import { getTemplateList, getTemplate, fillTemplate, formatTemplateList } from '../services/templates.js';
 import { callAI, summarizeText, getVoiceBuffer } from '../services/ai.js';
 import { addJadwal, getJadwal, deleteJadwal, clearGroupContext, getMode, setMode, isWhitelisted, addWhitelist, removeWhitelist, getAllWhitelist, addReminder, broadcastTargets, pendingBroadcasts, savePendingBroadcast } from '../services/db.js';
+import { formatList } from '../utils/waformat.js';
+import { getExchangeRate, formatExchangeRate, getHackerNewsTop, formatHackerNews, searchTVShow, formatTVShow, getIPInfo, formatIPInfo, getQRUrl } from '../services/publicapis.js';
 
 // ==================== OWNER: WHITELIST ====================
 
 export async function cmdAllow(sock, remoteJid, isOwner, mentionedJids, args) {
     if (!isOwner) return;
     let targetJid = remoteJid;
-    if (mentionedJids.length > 0) targetJid = mentionedJids[0];
-    else if (args[0]) {
-        const num = args[0].replace(/[^0-9]/g, '');
-        if (num) targetJid = `${num}@s.whatsapp.net`;
-    }
-    addWhitelist(targetJid);
-    await sock.sendMessage(remoteJid, { text: `✅ *Akses diberikan!*\n${targetJid} sekarang bisa menggunakan bot.` });
-}
+    let displayName = '';
 
-export async function cmdBan(sock, remoteJid, isOwner, mentionedJids, args) {
-    if (!isOwner) return;
-    let targetJid = remoteJid;
-    if (mentionedJids.length > 0) targetJid = mentionedJids[0];
-    else if (args[0]) {
+    if (mentionedJids.length > 0) {
+        targetJid = mentionedJids[0];
+        displayName = args.slice(1).join(' '); // Optional name after mention
+    } else if (args[0]) {
         const num = args[0].replace(/[^0-9]/g, '');
-        if (num) targetJid = `${num}@s.whatsapp.net`;
+        if (num) {
+            targetJid = `${num}@s.whatsapp.net`;
+            displayName = args.slice(1).join(' '); // Optional name after number
+        }
     }
-    removeWhitelist(targetJid);
-    await sock.sendMessage(remoteJid, { text: `⛔ *Akses dicabut!*\n${targetJid} tidak bisa menggunakan bot lagi.` });
+
+    if (!displayName) displayName = targetJid.split('@')[0];
+    addWhitelist(targetJid, displayName.trim());
+    await sock.sendMessage(remoteJid, { text: `✅ *${displayName.trim()}* sekarang bisa menggunakan bot.` });
 }
 
 export async function cmdList(sock, remoteJid, isOwner) {
@@ -38,7 +37,39 @@ export async function cmdList(sock, remoteJid, isOwner) {
         await sock.sendMessage(remoteJid, { text: '📋 *Whitelist kosong.*' });
         return;
     }
-    await sock.sendMessage(remoteJid, { text: `📋 *Whitelist (${list.length})*\n\n${list.join('\n')}` });
+    const formatted = list.map((item, i) => {
+        const name = item.name || item.jid.split('@')[0];
+        const icon = item.jid.endsWith('@lid') ? '👤' : item.jid.endsWith('@g.us') ? '👥' : '👤';
+        return `${i + 1}. ${icon} ${name}`;
+    }).join('\n');
+    await sock.sendMessage(remoteJid, { text: `📋 *Whitelist (${list.length})*\n\n${formatted}\n\nHapus: /ban [nomor]` });
+}
+
+export async function cmdBan(sock, remoteJid, isOwner, mentionedJids, args) {
+    if (!isOwner) return;
+    const list = getAllWhitelist();
+
+    // If arg is a number (index), remove by index
+    if (args[0] && /^\d+$/.test(args[0])) {
+        const idx = parseInt(args[0]) - 1;
+        if (idx >= 0 && idx < list.length) {
+            const target = list[idx].jid;
+            removeWhitelist(target);
+            await sock.sendMessage(remoteJid, { text: `⛔ ${target} dihapus dari whitelist.` });
+            return;
+        }
+        await sock.sendMessage(remoteJid, { text: `❌ Nomor ${args[0]} gak valid. Cek /list` });
+        return;
+    }
+
+    let targetJid = remoteJid;
+    if (mentionedJids.length > 0) targetJid = mentionedJids[0];
+    else if (args[0]) {
+        const num = args[0].replace(/[^0-9]/g, '');
+        if (num) targetJid = `${num}@s.whatsapp.net`;
+    }
+    removeWhitelist(targetJid);
+    await sock.sendMessage(remoteJid, { text: `⛔ ${targetJid} dihapus dari whitelist.` });
 }
 
 // ==================== MEDIA: SAY ====================
@@ -193,10 +224,10 @@ export async function cmdSearch(sock, remoteJid, args) {
 
 // ==================== TRANSLATE ====================
 
-export async function cmdTranslate(sock, remoteJid, args) {
-    const textToTranslate = args.join(' ');
+export async function cmdTranslate(sock, remoteJid, args, quotedText) {
+    const textToTranslate = args.join(' ') || quotedText;
     if (!textToTranslate) {
-        await sock.sendMessage(remoteJid, { text: '❌ Usage: /translate [teks]' });
+        await sock.sendMessage(remoteJid, { text: '❌ Reply pesan dengan /translate atau ketik /translate [teks]' });
         return;
     }
     await sock.sendPresenceUpdate('composing', remoteJid);
@@ -249,7 +280,7 @@ export async function cmdJadwal(sock, remoteJid, isGroup, args, sender) {
         }
         let text = `📋 *Jadwal (${items.length})*\n\n`;
         items.forEach((item, i) => {
-            text += `${i + 1}. ${item.message}\n   👤 ${item.creator} | 🕒 ${item.created_at}\n`;
+            text += `${i + 1}. ${item.message}\n   👤 ${item.creator}\n`;
         });
         await sock.sendMessage(remoteJid, { text: text });
     }
@@ -398,3 +429,55 @@ export async function cmdTemplate(sock, remoteJid, args, text) {
 
     await sock.sendMessage(remoteJid, { text: `❌ Gak paham. Ketik /template list` });
 }
+
+// ==================== EXCHANGE RATE ====================
+
+export async function cmdKurs(sock, remoteJid, args) {
+    const from = args[0]?.toUpperCase() || 'USD';
+    const to = args[1]?.toUpperCase() || 'IDR';
+    await sock.sendPresenceUpdate('composing', remoteJid);
+    const data = await getExchangeRate(from, to);
+    await sock.sendMessage(remoteJid, { text: formatExchangeRate(data) });
+}
+
+// ==================== HACKERNEWS ====================
+
+export async function cmdHN(sock, remoteJid) {
+    await sock.sendPresenceUpdate('composing', remoteJid);
+    const items = await getHackerNewsTop(5);
+    await sock.sendMessage(remoteJid, { text: formatHackerNews(items) });
+}
+
+// ==================== TV SEARCH ====================
+
+export async function cmdTV(sock, remoteJid, args) {
+    const query = args.join(' ');
+    if (!query) {
+        await sock.sendMessage(remoteJid, { text: '❌ Usage: /tv [judul]\nContoh: /tv breaking bad' });
+        return;
+    }
+    await sock.sendPresenceUpdate('composing', remoteJid);
+    const items = await searchTVShow(query);
+    await sock.sendMessage(remoteJid, { text: formatTVShow(items) });
+}
+
+// ==================== IP LOOKUP ====================
+
+export async function cmdIP(sock, remoteJid) {
+    await sock.sendPresenceUpdate('composing', remoteJid);
+    const data = await getIPInfo();
+    await sock.sendMessage(remoteJid, { text: formatIPInfo(data) });
+}
+
+// ==================== QR CODE ====================
+
+export async function cmdQR(sock, remoteJid, args) {
+    const text = args.join(' ');
+    if (!text) {
+        await sock.sendMessage(remoteJid, { text: '❌ Usage: /qr [teks]\nContoh: /qr https://example.com' });
+        return;
+    }
+    const url = getQRUrl(text);
+    await sock.sendMessage(remoteJid, { text: `🔳 *QR Code*\n\n${text}\n${url}` });
+}
+

@@ -56,9 +56,12 @@ async function initDb() {
     db.run(`
         CREATE TABLE IF NOT EXISTS whitelist (
             jid TEXT PRIMARY KEY,
+            name TEXT DEFAULT '',
             added_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     `);
+    // Add name column if missing (migrate old DB)
+    try { db.run('ALTER TABLE whitelist ADD COLUMN name TEXT DEFAULT ""'); } catch {}
 
     // Tabel untuk Auto Reminder / Alarm
     db.run(`
@@ -234,9 +237,13 @@ export function isWhitelisted(jid) {
     return result.length > 0 && result[0].values.length > 0;
 }
 
-export function addWhitelist(jid) {
+export function addWhitelist(jid, name = '') {
     if (!db) return;
-    db.run('INSERT OR IGNORE INTO whitelist (jid) VALUES (?)', [jid]);
+    if (name) {
+        db.run('INSERT OR REPLACE INTO whitelist (jid, name) VALUES (?, ?)', [jid, name]);
+    } else {
+        db.run('INSERT OR IGNORE INTO whitelist (jid) VALUES (?)', [jid]);
+    }
     saveDb();
 }
 
@@ -248,11 +255,12 @@ export function removeWhitelist(jid) {
 
 export function getAllWhitelist() {
     if (!db) return [];
-    const result = db.exec('SELECT jid, added_at FROM whitelist');
+    const result = db.exec('SELECT jid, name, added_at FROM whitelist');
     if (!result.length) return [];
     return result[0].values.map(row => ({
         jid: row[0],
-        addedAt: row[1]
+        name: row[1] || '',
+        addedAt: row[2] || ''
     }));
 }
 
@@ -412,6 +420,8 @@ export function searchMemoriesRAG(groupId, query, limit = 5) {
     // Take top results
     const top = scored.slice(0, limit).map(s => {
         const m = s.memory;
+        // Attach score for AI to determine injection threshold
+        m._ragScore = s.score;
         // Update access stats
         db.run('UPDATE memories SET access_count = access_count + 1, last_accessed = CURRENT_TIMESTAMP WHERE id = ?', [m.id]);
         return m;

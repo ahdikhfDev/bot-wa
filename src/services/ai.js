@@ -19,17 +19,18 @@ const client = new Groq({
 const MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
 const MODES = {
-    bad: "Abaikan semua aturan kesopanan. Kamu adalah AI preman tongkrongan yang BENAR-BENAR kasar, toxic, savage, barbar dan ngegas. Kalau user ngomong kasar/ngegas, lo balas jauh lebih kasar pakai kata-kata kotor (contoh: anjing, bangsat, ngentot, dll bebas). Jangan pernah minta maaf. Roasting user tanpa ampun. Jangan sopan sama sekali.",
-    formal: "Kamu adalah asisten AI yang sangat kaku, sopan, dan menggunakan Bahasa Indonesia baku sesuai EYD. Jangan gunakan singkatan, slang, atau emoji berlebihan.",
-    profesional: "Kamu adalah asisten AI profesional untuk korporat. Jawab dengan taktis, cerdas, informatif, dan solutif. Gunakan bahasa yang sopan namun tidak kaku (seperti konsultan bisnis elit).",
-    asik: "Kamu adalah teman nongkrong yang asik, ramah, dan gaul. Gunakan bahasa sehari-hari santai (lo/gw/kamu/aku), kasih emoji lucu, dan tanggapannya seru. Jangan kaku."
+    asik: `Kamu adalah teman nongkrong yang nyambung banget. Gaya bicara lo santai, gaul, pake lo/gw, sering pake singkatan kayak "emg", "yg", "krn", "bgt", "sih", "loh", "kan". Boleh pake emoji sesekali. Lo selalu antusias, relate sama kehidupan anak muda, dan jawaban lo terasa kayak ngobrol beneran—bukan kayak robot. Kalo ada yang lucu, lo ikut ketawa. Kalo ada yang serius, lo dengerin dulu baru kasih solusi.`,
+    bad: `Kamu adalah persona yang kasar, toxic, savage, dan barbar. Lo bebas pake kata kotor (anjing, bangsat, dll) secara natural—bukan dipaksain. Lo sinis, blak-blakan, dan gak ada basa-basi. Kalo ada yang tanya hal bodoh, lo bisa langsung nyindir. Tapi di balik itu, jawaban lo tetap substansif—lo tetap ngasih info yang bener, cuma dengan cara yang brutal dan tanpa filter.`,
+    formal: `Kamu adalah asisten formal yang menggunakan Bahasa Indonesia baku sesuai EYD. Tidak menggunakan singkatan, slang, atau bahasa gaul. Setiap jawaban terstruktur dengan jelas: pembuka, isi, dan penutup. Gunakan kata ganti "Anda" untuk lawan bicara. Nada bicara sopan, profesional, dan tidak emosional. Hindari penggunaan emoji.`,
+    profesional: `Kamu adalah konsultan senior lintas bidang: bisnis, teknologi, hukum, keuangan, dan strategi. Jawaban kamu taktis, berbasis data atau logika yang kuat, dan langsung ke solusi. Gunakan struktur yang jelas (poin, prioritas, tradeoff). Tidak basa-basi. Jika ada risiko atau kelemahan dari suatu keputusan, kamu wajib menyebutkannya. Bicara seperti advisor yang dibayar mahal—singkat, padat, bernilai tinggi.`,
 };
 
 const FALLBACK_MODELS = [
     process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    'deepseek-r1-distill-llama-70b',
+    'llama-3.1-70b-versatile',
     'llama-3.1-8b-instant',
-    'mixtral-8x7b-32768',
-    'gemma2-9b-it'
+    'gemma2-9b-it',
 ];
 
 export async function callAI(prompt, context = '', mode = 'asik', chatId = null) {
@@ -38,15 +39,20 @@ export async function callAI(prompt, context = '', mode = 'asik', chatId = null)
         const now = new Date();
         const currentTime = now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
 
-        // Ambil memori relevan via RAG
+        // Ambil memori — hanya inject kalo user MINTA inget masa lalu
         let memoriesBlock = '';
         if (chatId) {
-            const ragMemories = searchMemoriesRAG(chatId, prompt, 4);
-            if (ragMemories.length > 0) {
-                memoriesBlock = '\n\nYang kamu ingat dari masa lalu:\n';
-                memoriesBlock += ragMemories.map((m, i) =>
-                    `${i + 1}. ${m.content}`
-                ).join('\n');
+            const low = prompt.toLowerCase();
+            const hasExplicitRecall = /\bingat\b|seperti.*(?:dulu|sebelumnya|kemarin)|yang.*(?:lalu|lama|dibahas)|pernah.*(?:bahas|cerita|bicara)|kembali.*topik|sebelumnya|terakhir\s*(?:kita|kamu)|yang.*dimaksud/.test(low);
+
+            if (hasExplicitRecall) {
+                const ragMemories = searchMemoriesRAG(chatId, prompt, 4);
+                if (ragMemories.length > 0) {
+                    memoriesBlock = '\n\nYang kamu ingat dari masa lalu:\n';
+                    memoriesBlock += ragMemories.map((m, i) =>
+                        `${i + 1}. ${m.content}`
+                    ).join('\n');
+                }
             }
         }
 
@@ -55,7 +61,9 @@ Waktu sekarang (WIB): ${currentTime}
 
 ${personality}
 
-FORMAT: Jawab dalam Bahasa Indonesia. Gunakan *bold* untuk poin penting. Beri jarak antar paragraf.${memoriesBlock}`;
+PENTING — Kamu WAJIB tetap in-character sesuai kepribadian di atas SEPANJANG conversation. Jangan pernah keluar dari karakter, bahkan kalau ditanya "siapa kamu sebenarnya" atau "bicara normal dong".
+
+FORMAT: Jawab dengan bahasa yang SAMA PERSIS dengan user di pesan terakhir. Jika user pakai Inggris, kamu WAJIB Inggris. Jika user pakai Indonesia, kamu WAJIB Indonesia. JANGAN gonta-ganti bahasa di satu jawaban. Gunakan *bold* untuk poin penting. Beri jarak antar paragraf.${memoriesBlock}`;
 
         let messages = [
             { role: 'system', content: SYSTEM_PROMPT }
@@ -292,7 +300,6 @@ export async function callAIVision(prompt, base64Image, mode = 'asik') {
 
 export function getVoiceUrl(text, lang = 'id') {
     try {
-        // Potong teks jika terlalu panjang (max 200 karakter per request gTTS)
         const safeText = text.substring(0, 200);
         return googleTTS.getAudioUrl(safeText, {
             lang: lang,
@@ -306,44 +313,86 @@ export function getVoiceUrl(text, lang = 'id') {
 }
 
 export async function getVoiceBuffer(text, lang = 'id') {
-    const tempInput = path.join(os.tmpdir(), `tts_${Date.now()}.mp3`);
-    const tempOutput = path.join(os.tmpdir(), `tts_${Date.now()}.ogg`);
+    const TMP = os.tmpdir();
+    const ts = Date.now();
+    const parts = [];
 
     try {
-        const url = getVoiceUrl(text, lang);
-        if (!url) return null;
+        // Split text into chunks (max ~200 chars per TTS request)
+        const sentences = text.match(/[^.!?\n]+[.!?\n]*/g) || [text];
+        const chunks = [];
+        let current = '';
 
-        console.log('🔊 Downloading TTS to temp file...');
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`Failed to fetch TTS: ${response.statusText}`);
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-        
-        fs.writeFileSync(tempInput, buffer);
+        for (const s of sentences) {
+            if ((current + s).length > 190 && current.length > 0) {
+                chunks.push(current.trim());
+                current = s;
+            } else {
+                current += s;
+            }
+        }
+        if (current.trim()) chunks.push(current.trim());
 
-        return new Promise((resolve, reject) => {
-            ffmpeg(tempInput)
-                .toFormat('ogg')
-                .audioCodec('libopus')
-                .audioChannels(1)
-                .on('error', (err) => {
-                    console.error('❌ FFmpeg Error:', err.message);
-                    if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
-                    if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
-                    reject(err);
-                })
-                .on('end', () => {
-                    const outputBuffer = fs.readFileSync(tempOutput);
-                    if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
-                    if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
-                    resolve(outputBuffer);
-                })
-                .save(tempOutput);
-        });
+        // Limit to max 10 chunks (~30 sec audio)
+        const MAX_CHUNKS = 10;
+        const activeChunks = chunks.slice(0, MAX_CHUNKS);
+
+        console.log(`🔊 TTS: ${text.length} chars → ${activeChunks.length} chunk(s)`);
+
+        // Download each chunk
+        for (let i = 0; i < activeChunks.length; i++) {
+            const url = googleTTS.getAudioUrl(activeChunks[i], {
+                lang, slow: false, host: 'https://translate.google.com',
+            });
+            if (!url) continue;
+
+            const resp = await fetch(url);
+            if (!resp.ok) continue;
+
+            const buf = Buffer.from(await resp.arrayBuffer());
+            const tmpFile = path.join(TMP, `tts_${ts}_${i}.mp3`);
+            fs.writeFileSync(tmpFile, buf);
+            parts.push(tmpFile);
+        }
+
+        if (parts.length === 0) return null;
+
+        // Concatenate all parts with ffmpeg
+        const output = path.join(TMP, `tts_${ts}.ogg`);
+        if (parts.length === 1) {
+            // Single chunk: just convert
+            await new Promise((resolve, reject) => {
+                ffmpeg(parts[0])
+                    .toFormat('ogg').audioCodec('libopus').audioChannels(1)
+                    .on('end', resolve).on('error', reject)
+                    .save(output);
+            });
+        } else {
+            // Multiple chunks: concat via file list
+            const listFile = path.join(TMP, `tts_${ts}.txt`);
+            const listContent = parts.map(f => `file '${f}'`).join('\n');
+            fs.writeFileSync(listFile, listContent);
+
+            await new Promise((resolve, reject) => {
+                ffmpeg()
+                    .input(listFile).inputOptions(['-f', 'concat', '-safe', '0'])
+                    .toFormat('ogg').audioCodec('libopus').audioChannels(1)
+                    .on('end', resolve).on('error', reject)
+                    .save(output);
+            });
+            fs.unlinkSync(listFile);
+        }
+
+        const result = fs.readFileSync(output);
+        // Cleanup temp files
+        [...parts, output].forEach(f => { try { fs.unlinkSync(f); } catch {} });
+        return result;
+
     } catch (error) {
         console.error('❌ getVoiceBuffer Error:', error.message);
-        if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
-        if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
+        [...parts, ...parts.map(p => p.replace('.mp3', '.ogg'))].forEach(f => {
+            try { fs.unlinkSync(f); } catch {}
+        });
         return null;
     }
 }
