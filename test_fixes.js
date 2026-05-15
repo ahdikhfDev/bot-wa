@@ -50,8 +50,8 @@ async function runTests() {
     // TEST 2: Few-shot examples in MODES
     // ====================================================
     console.log('\n--- [2] Few-shot examples ---');
-    assert(source.includes('Contoh percakapan'),
-        'Few-shot examples exist in MODES');
+    assert(source.includes('CONTOH'),
+        'CONTOH section exists in MODES');
     assert(source.includes('"gua capek banget hari ini"'),
         'asik mode has examples');
     assert(source.includes('dasar pertanyaan goblok'),
@@ -88,11 +88,11 @@ async function runTests() {
     // ====================================================
     console.log('\n--- [5] No empty tools ---');
     assert(!source.includes('tools: []'),
-        'No empty tools array sent');
-    assert(!source.includes("tools,"),
-        'No tools parameter in API call');
-    assert(!source.includes("tool_choice:"),
-        'No tool_choice parameter');
+        'Tools sent with real definition (not empty [])');
+    assert(source.includes('REMINDER_TOOL'),
+        'REMINDER_TOOL definition exists');
+    assert(source.includes('tools: [REMINDER_TOOL]'),
+        'Tools sent with proper definition (not empty)');
 
     // ====================================================
     // TEST 6: Private chat context saving
