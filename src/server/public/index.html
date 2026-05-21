@@ -70,6 +70,7 @@ input:focus { outline: none; border-color: #22d3ee; }
   <div style="display:flex;align-items:center;gap:12px">
     <span id="statusBadge" class="badge badge-yellow">Loading...</span>
     <span style="font-size:13px;color:#94a3b8" id="uptimeDisplay"></span>
+    <button class="btn btn-sm" style="background:#334155;color:#94a3b8" onclick="showChangePw()">🔑 Ganti Password</button>
   </div>
 </header>
 
@@ -89,15 +90,121 @@ input:focus { outline: none; border-color: #22d3ee; }
   <div id="tab-config" class="tab-content"></div>
 </div>
 
+<div id="loginOverlay" style="position:fixed;inset:0;background:#0f172a;display:flex;align-items:center;justify-content:center;z-index:999">
+  <div class="card" style="min-width:340px;max-width:380px;text-align:center">
+    <div class="logo" style="width:48px;height:48px;font-size:24px;margin:0 auto 16px">B</div>
+    <h2 style="font-size:18px;margin-bottom:4px"><span style="color:#22d3ee">Bot-WA</span> Dashboard</h2>
+    <p class="text-muted" style="font-size:13px;margin-bottom:20px">Masukkan password untuk mengakses</p>
+    <input id="loginPassword" type="password" placeholder="Password" style="margin-bottom:12px" onkeydown="if(event.key==='Enter') doLogin()">
+    <div id="loginError" style="color:#fca5a5;font-size:13px;margin-bottom:12px;display:none"></div>
+    <button class="btn btn-primary" style="width:100%;padding:10px" onclick="doLogin()">Login</button>
+  </div>
+</div>
+
+<div id="changePwOverlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:none;align-items:center;justify-content:center;z-index:100">
+  <div class="card" style="min-width:340px;max-width:380px">
+    <h3 style="font-size:16px;margin-bottom:16px">🔑 Ganti Password</h3>
+    <div style="margin-bottom:12px"><input id="cp-old" type="password" placeholder="Password saat ini"></div>
+    <div style="margin-bottom:12px"><input id="cp-new" type="password" placeholder="Password baru (min 4 karakter)"></div>
+    <div style="margin-bottom:12px"><input id="cp-confirm" type="password" placeholder="Konfirmasi password baru" onkeydown="if(event.key==='Enter') doChangePassword()"></div>
+    <div id="cpError" style="color:#fca5a5;font-size:13px;margin-bottom:12px;display:none"></div>
+    <div class="flex gap-4">
+      <button class="btn btn-primary" onclick="doChangePassword()">Simpan</button>
+      <button class="btn btn-danger" onclick="closeChangePw()">Batal</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = '';
+let authToken = localStorage.getItem('bot_wa_token') || '';
+
+function setToken(t) {
+  authToken = t;
+  if (t) localStorage.setItem('bot_wa_token', t);
+  else localStorage.removeItem('bot_wa_token');
+}
 
 async function api(path, opts = {}) {
-  const r = await fetch(API + path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts
-  });
+  const headers = { 'Content-Type': 'application/json' };
+  if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+  const r = await fetch(API + path, { headers, ...opts });
+  if (r.status === 401) {
+    setToken('');
+    showLogin();
+    return { error: 'Unauthorized' };
+  }
   return r.json();
+}
+
+function showLogin() {
+  document.getElementById('loginPassword').value = '';
+  document.getElementById('loginError').style.display = 'none';
+  document.getElementById('loginOverlay').style.display = 'flex';
+  document.getElementById('loginPassword').focus();
+}
+
+function doLogin() {
+  const pw = document.getElementById('loginPassword').value;
+  if (!pw) return;
+  fetch(API + '/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: pw })
+  }).then(r => r.json()).then(d => {
+    if (d.success) {
+      setToken(d.token);
+      document.getElementById('loginOverlay').style.display = 'none';
+      init();
+    } else {
+      document.getElementById('loginError').textContent = d.error || 'Password salah';
+      document.getElementById('loginError').style.display = 'block';
+    }
+  });
+}
+
+function showChangePw() {
+  document.getElementById('cp-old').value = '';
+  document.getElementById('cp-new').value = '';
+  document.getElementById('cp-confirm').value = '';
+  document.getElementById('cpError').style.display = 'none';
+  document.getElementById('changePwOverlay').style.display = 'flex';
+}
+
+function closeChangePw() {
+  document.getElementById('changePwOverlay').style.display = 'none';
+}
+
+function doChangePassword() {
+  const oldPw = document.getElementById('cp-old').value;
+  const newPw = document.getElementById('cp-new').value;
+  const confirmPw = document.getElementById('cp-confirm').value;
+  if (!oldPw || !newPw) {
+    document.getElementById('cpError').textContent = 'Isi semua field';
+    return document.getElementById('cpError').style.display = 'block';
+  }
+  if (newPw !== confirmPw) {
+    document.getElementById('cpError').textContent = 'Password baru tidak cocok';
+    return document.getElementById('cpError').style.display = 'block';
+  }
+  if (newPw.length < 4) {
+    document.getElementById('cpError').textContent = 'Password minimal 4 karakter';
+    return document.getElementById('cpError').style.display = 'block';
+  }
+  fetch(API + '/api/auth/change-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+    body: JSON.stringify({ oldPassword: oldPw, newPassword: newPw })
+  }).then(r => r.json()).then(d => {
+    if (d.success) {
+      setToken(d.token);
+      closeChangePw();
+      alert('Password berhasil diganti!');
+    } else {
+      document.getElementById('cpError').textContent = d.error || 'Gagal';
+      document.getElementById('cpError').style.display = 'block';
+    }
+  });
 }
 
 // ==================== TABS ====================
@@ -326,6 +433,7 @@ async function saveApiKey(key) {
 
 // ==================== INIT ====================
 async function init() {
+  document.getElementById('loginOverlay').style.display = 'none';
   await loadStatus();
   await loadSkills();
   await loadWhitelist();
@@ -334,7 +442,19 @@ async function init() {
   setInterval(loadStatus, 10000);
 }
 
-init();
+// Check auth on load
+(async function() {
+  if (authToken) {
+    const v = await fetch('/api/auth/verify', {
+      headers: { 'Authorization': 'Bearer ' + authToken }
+    }).then(r => r.json());
+    if (v.authenticated) {
+      init();
+      return;
+    }
+  }
+  showLogin();
+})();
 </script>
 </body>
 </html>

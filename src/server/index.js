@@ -1,11 +1,47 @@
 import express from 'express';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { getAllSkills, getSkill, setSkillEnabled, getSkillConfig, setSkillConfig, getAllSkillConfigs, getAllWhitelist, addWhitelist, removeWhitelist, getAllSettings, getSetting, setSetting } from '../services/db.js';
 import { getSkillNames } from '../skills/_loader.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.WEB_PORT || '6789');
+
+const AUTH_TOKEN_KEY = 'dashboard_token';
+const PASSWORD_KEY = 'dashboard_password';
+const DEFAULT_PASSWORD = '12345678';
+
+function hashPassword(pw) {
+    return crypto.createHash('sha256').update(pw).digest('hex');
+}
+
+function generateToken() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+function getAuthToken() {
+    let token = getSetting(AUTH_TOKEN_KEY);
+    if (!token) {
+        token = generateToken();
+        setSetting(AUTH_TOKEN_KEY, token);
+    }
+    return token;
+}
+
+function requireAuth(req, res, next) {
+    if (req.path === '/api/auth/login' || req.path === '/api/auth/verify') {
+        return next();
+    }
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    if (auth.slice(7) !== getAuthToken()) {
+        return res.status(401).json({ error: 'Invalid token' });
+    }
+    next();
+}
 
 let botStatus = { connected: false, startTime: Date.now(), messageCount: 0 };
 let sockRef = null;
@@ -23,9 +59,54 @@ export function setSock(sock) {
 }
 
 export function startServer() {
+    // Set default password on first run
+    if (!getSetting(PASSWORD_KEY)) {
+        setSetting(PASSWORD_KEY, hashPassword(DEFAULT_PASSWORD));
+        console.log('🔑 Dashboard password default: 12345678');
+    }
+
     const app = express();
     app.use(express.json());
+    app.use('/api', requireAuth);
     app.use(express.static(path.join(__dirname, 'public')));
+
+    // ==================== AUTH ====================
+    app.post('/api/auth/login', (req, res) => {
+        const { password } = req.body;
+        if (!password) return res.status(400).json({ error: 'Password required' });
+        const stored = getSetting(PASSWORD_KEY, hashPassword(DEFAULT_PASSWORD));
+        if (hashPassword(password) !== stored) {
+            return res.status(401).json({ error: 'Password salah' });
+        }
+        const token = getAuthToken();
+        res.json({ success: true, token });
+    });
+
+    app.get('/api/auth/verify', (req, res) => {
+        const auth = req.headers.authorization;
+        if (!auth || !auth.startsWith('Bearer ')) {
+            return res.json({ authenticated: false });
+        }
+        res.json({ authenticated: auth.slice(7) === getAuthToken() });
+    });
+
+    app.post('/api/auth/change-password', (req, res) => {
+        const { oldPassword, newPassword } = req.body;
+        if (!oldPassword || !newPassword) {
+            return res.status(400).json({ error: 'oldPassword and newPassword required' });
+        }
+        const stored = getSetting(PASSWORD_KEY, hashPassword(DEFAULT_PASSWORD));
+        if (hashPassword(oldPassword) !== stored) {
+            return res.status(401).json({ error: 'Password saat ini salah' });
+        }
+        if (newPassword.length < 4) {
+            return res.status(400).json({ error: 'Password minimal 4 karakter' });
+        }
+        setSetting(PASSWORD_KEY, hashPassword(newPassword));
+        const newToken = generateToken();
+        setSetting(AUTH_TOKEN_KEY, newToken);
+        res.json({ success: true, token: newToken });
+    });
 
     // ==================== API: STATUS ====================
     app.get('/api/status', (req, res) => {
