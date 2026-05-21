@@ -3,3 +3,4 @@ auth_session/
 auth_session_link/
 logs/
 *.tar.gz
+*.sqlite

@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bot-WA Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+header { background: linear-gradient(135deg, #1e293b, #334155); padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #475569; }
+header h1 { font-size: 20px; font-weight: 700; }
+header h1 span { color: #22d3ee; }
+.badge { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.badge-green { background: #065f46; color: #6ee7b7; }
+.badge-red { background: #7f1d1d; color: #fca5a5; }
+.badge-yellow { background: #713f12; color: #fcd34d; }
+.container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
+.card h3 { font-size: 13px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.card .value { font-size: 28px; font-weight: 700; }
+.card .sub { font-size: 12px; color: #64748b; margin-top: 4px; }
+.tabs { display: flex; gap: 4px; margin-bottom: 20px; background: #1e293b; border-radius: 10px; padding: 4px; border: 1px solid #334155; }
+.tab { padding: 8px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; color: #94a3b8; border: none; background: none; transition: all 0.2s; }
+.tab:hover { color: #e2e8f0; }
+.tab.active { background: #334155; color: #22d3ee; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 12px 8px; border-bottom: 1px solid #1e293b; font-size: 14px; }
+th { color: #94a3b8; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+tr:hover td { background: #1e293b; }
+input, select { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; padding: 8px 12px; border-radius: 8px; font-size: 14px; width: 100%; }
+input:focus { outline: none; border-color: #22d3ee; }
+.btn { padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; }
+.btn-primary { background: #0284c7; color: white; }
+.btn-primary:hover { background: #0369a1; }
+.btn-danger { background: #dc2626; color: white; }
+.btn-danger:hover { background: #b91c1c; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.toggle { position: relative; width: 44px; height: 24px; cursor: pointer; }
+.toggle input { display: none; }
+.toggle .slider { position: absolute; inset: 0; background: #475569; border-radius: 12px; transition: 0.3s; }
+.toggle .slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.3s; }
+.toggle input:checked+.slider { background: #22d3ee; }
+.toggle input:checked+.slider::before { transform: translateX(20px); }
+.flex { display: flex; }
+.flex-between { justify-content: space-between; align-items: center; }
+.gap-2 { gap: 8px; }
+.gap-4 { gap: 16px; }
+.mt-4 { margin-top: 16px; }
+.mb-4 { margin-bottom: 16px; }
+.text-center { text-align: center; }
+.text-muted { color: #64748b; }
+.text-green { color: #6ee7b7; }
+.text-red { color: #fca5a5; }
+.text-cyan { color: #22d3ee; }
+.logo { width: 32px; height: 32px; background: linear-gradient(135deg, #22d3ee, #0284c7); border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; margin-right: 10px; }
+.empty { padding: 40px; text-align: center; color: #64748b; }
+.config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; }
+@media (max-width: 768px) { .config-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <div style="display:flex;align-items:center">
+    <div class="logo">B</div>
+    <h1><span>Bot-WA</span> Dashboard</h1>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <span id="statusBadge" class="badge badge-yellow">Loading...</span>
+    <span style="font-size:13px;color:#94a3b8" id="uptimeDisplay"></span>
+  </div>
+</header>
+
+<div class="container">
+  <div class="grid" id="statsGrid"></div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="skills">Skills</button>
+    <button class="tab" data-tab="whitelist">Whitelist</button>
+    <button class="tab" data-tab="settings">Settings</button>
+    <button class="tab" data-tab="config">API Keys</button>
+  </div>
+
+  <div id="tab-skills" class="tab-content active"></div>
+  <div id="tab-whitelist" class="tab-content"></div>
+  <div id="tab-settings" class="tab-content"></div>
+  <div id="tab-config" class="tab-content"></div>
+</div>
+
+<script>
+const API = '';
+
+async function api(path, opts = {}) {
+  const r = await fetch(API + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts
+  });
+  return r.json();
+}
+
+// ==================== TABS ====================
+document.getElementById('tabs').addEventListener('click', e => {
+  const tab = e.target.closest('.tab');
+  if (!tab) return;
+  document.querySelectorAll('.tab, .tab-content').forEach(el => el.classList.remove('active'));
+  tab.classList.add('active');
+  document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+});
+
+// ==================== STATUS ====================
+async function loadStatus() {
+  const s = await api('/api/status');
+  const badge = document.getElementById('statusBadge');
+  if (s.connected) {
+    badge.className = 'badge badge-green';
+    badge.textContent = 'Connected';
+  } else {
+    badge.className = 'badge badge-red';
+    badge.textContent = 'Disconnected';
+  }
+  const uptime = s.uptime || 0;
+  const h = Math.floor(uptime / 3600);
+  const m = Math.floor((uptime % 3600) / 60);
+  document.getElementById('uptimeDisplay').textContent = h + 'h ' + m + 'm';
+
+  document.getElementById('statsGrid').innerHTML = `
+    <div class="card"><h3>Status Bot</h3><div class="value ${s.connected ? 'text-green' : 'text-red'}">${s.connected ? '● Aktif' : '○ Mati'}</div><div class="sub">WhatsApp connection</div></div>
+    <div class="card"><h3>Skills Aktif</h3><div class="value text-cyan">${s.skillsCount || 0}</div><div class="sub">Total skill terinstall</div></div>
+    <div class="card"><h3>Whitelist</h3><div class="value">${s.whitelistCount || 0}</div><div class="sub">User yang diizinkan</div></div>
+    <div class="card"><h3>Uptime</h3><div class="value">${h}<span style="font-size:14px">j</span> ${m}<span style="font-size:14px">m</span></div><div class="sub">Bot berjalan</div></div>
+  `;
+}
+
+// ==================== SKILLS ====================
+async function loadSkills() {
+  const skills = await api('/api/skills');
+  if (!skills.length) {
+    document.getElementById('tab-skills').innerHTML = '<div class="empty">Belum ada skill terdaftar</div>';
+    return;
+  }
+  let html = `<table><thead><tr><th>Skill</th><th>Commands</th><th>Status</th><th>Owner Only</th><th>Group Only</th><th>Aksi</th></tr></thead><tbody>`;
+  for (const s of skills) {
+    html += `<tr>
+      <td><strong>${s.title || s.name}</strong><br><span class="text-muted" style="font-size:12px">${s.description || ''}</span></td>
+      <td>${(s.commands || []).map(c => '<code style="background:#0f172a;padding:2px 6px;border-radius:4px;font-size:12px">/'+c+'</code>').join(' ')}</td>
+      <td><label class="toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''} data-name="${s.name}" onchange="toggleSkill(this)"><span class="slider"></span></label></td>
+      <td>${s.owner_only ? '👑' : '-'}</td>
+      <td>${s.group_only ? '👥' : '-'}</td>
+      <td>${s.has_config ? '<button class="btn btn-sm btn-primary" onclick="showSkillConfig(\''+s.name+'\')">Config</button>' : '-'}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('tab-skills').innerHTML = html;
+}
+
+async function toggleSkill(el) {
+  await api('/api/skills/' + el.dataset.name + '/toggle', {
+    method: 'PUT',
+    body: JSON.stringify({ enabled: el.checked })
+  });
+}
+
+async function showSkillConfig(name) {
+  const cfg = await api('/api/skills/' + name + '/config');
+  const keys = Object.keys(cfg);
+  if (!keys.length) {
+    alert('Tidak ada konfigurasi untuk skill ini.');
+    return;
+  }
+  const html = keys.map(k => `
+    <div class="config-grid">
+      <span style="font-size:13px;font-weight:500">${k}</span>
+      <div style="display:flex;gap:4px">
+        <input type="text" id="cfg-${name}-${k}" value="${cfg[k] || ''}" placeholder="${k}">
+        <button class="btn btn-sm btn-primary" onclick="saveConfig('${name}','${k}')">Save</button>
+      </div>
+    </div>
+  `).join('');
+  const div = document.createElement('div');
+  div.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100';
+  div.innerHTML = `<div class="card" style="min-width:400px;max-width:500px">
+    <div class="flex flex-between mb-4"><h3 style="font-size:16px">⚙️ ${name} Config</h3><button class="btn btn-sm btn-danger" onclick="this.closest('div[style]').remove()">✕</button></div>
+    ${html}
+  </div>`;
+  document.body.appendChild(div);
+}
+
+async function saveConfig(name, key) {
+  const value = document.getElementById('cfg-' + name + '-' + key).value;
+  await api('/api/skills/' + name + '/config', {
+    method: 'PUT',
+    body: JSON.stringify({ key, value })
+  });
+  alert('Config saved!');
+}
+
+// ==================== WHITELIST ====================
+async function loadWhitelist() {
+  const list = await api('/api/whitelist');
+  let html = `<div class="flex flex-between mb-4">
+    <h3 style="font-size:16px">👤 User yang Diizinkan</h3>
+    <button class="btn btn-primary" onclick="showAddWhitelist()">+ Tambah</button>
+  </div>`;
+  if (!list.length) {
+    html += '<div class="empty">Belum ada user di whitelist</div>';
+  } else {
+    html += `<table><thead><tr><th>#</th><th>Nama</th><th>JID</th><th>Ditambahkan</th><th>Aksi</th></tr></thead><tbody>`;
+    list.forEach((item, i) => {
+      html += `<tr>
+        <td>${i + 1}</td>
+        <td>${item.name || '-'}</td>
+        <td style="font-size:12px;font-family:monospace">${item.jid}</td>
+        <td style="font-size:12px">${item.addedAt || '-'}</td>
+        <td><button class="btn btn-sm btn-danger" onclick="removeWhitelist('${item.jid}')">Hapus</button></td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  }
+  document.getElementById('tab-whitelist').innerHTML = html;
+}
+
+async function showAddWhitelist() {
+  const div = document.createElement('div');
+  div.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100';
+  div.innerHTML = `<div class="card" style="min-width:350px">
+    <h3 style="font-size:16px;margin-bottom:16px">Tambah Whitelist</h3>
+    <div style="margin-bottom:12px"><input id="wl-jid" placeholder="628xxx@s.whatsapp.net atau 628xxx"></div>
+    <div style="margin-bottom:16px"><input id="wl-name" placeholder="Nama (opsional)"></div>
+    <div class="flex gap-4">
+      <button class="btn btn-primary" onclick="addWhitelist()">Tambah</button>
+      <button class="btn btn-danger" onclick="this.closest('div[style]').remove()">Batal</button>
+    </div>
+  </div>`;
+  document.body.appendChild(div);
+}
+
+async function addWhitelist() {
+  let jid = document.getElementById('wl-jid').value.trim();
+  const name = document.getElementById('wl-name').value.trim();
+  if (!jid) return alert('Masukkan nomor!');
+  if (!jid.includes('@')) jid = jid + '@s.whatsapp.net';
+  await api('/api/whitelist', { method: 'POST', body: JSON.stringify({ jid, name }) });
+  document.querySelector('div[style]').remove();
+  loadWhitelist();
+}
+
+async function removeWhitelist(jid) {
+  if (!confirm('Hapus ' + jid + ' dari whitelist?')) return;
+  await api('/api/whitelist/' + encodeURIComponent(jid), { method: 'DELETE' });
+  loadWhitelist();
+}
+
+// ==================== SETTINGS ====================
+async function loadSettings() {
+  const settings = await api('/api/settings');
+  let html = `<h3 style="font-size:16px;margin-bottom:16px">⚙️ Pengaturan Bot</h3>
+  <table><thead><tr><th>Key</th><th>Value</th><th>Aksi</th></tr></thead><tbody>`;
+  const keys = Object.keys(settings);
+  if (!keys.length) {
+    html += '<tr><td colspan="3" class="empty">Belum ada pengaturan</td></tr>';
+  }
+  for (const k of keys) {
+    html += `<tr>
+      <td style="font-weight:500">${k}</td>
+      <td><input type="text" id="set-${k}" value="${settings[k] || ''}" style="max-width:300px"></td>
+      <td><button class="btn btn-sm btn-primary" onclick="saveSetting('${k}')">Save</button></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('tab-settings').innerHTML = html;
+}
+
+async function saveSetting(key) {
+  const value = document.getElementById('set-' + key).value;
+  await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key, value }) });
+  loadSettings();
+}
+
+// ==================== API KEYS ====================
+async function loadApiKeys() {
+  const settings = await api('/api/settings');
+  const apiKeys = Object.keys(settings).filter(k => k.toLowerCase().includes('api') || k.toLowerCase().includes('key') || k === 'GROQ_API_KEY' || k === 'TAVILY_API_KEY');
+  let html = `<h3 style="font-size:16px;margin-bottom:8px">🔑 API Keys</h3>
+  <p class="text-muted" style="font-size:13px;margin-bottom:16px">Kelola API key untuk layanan eksternal</p>`;
+  if (!apiKeys.length) {
+    html += '<div class="empty">Belum ada API key disimpan. Tambah via Settings tab.</div>';
+  } else {
+    html += `<table><thead><tr><th>Service</th><th>API Key</th><th>Aksi</th></tr></thead><tbody>`;
+    for (const k of apiKeys) {
+      const val = settings[k] || '';
+      const masked = val.length > 8 ? val.substring(0, 4) + '••••' + val.substring(val.length - 4) : '••••••••';
+      html += `<tr>
+        <td style="font-weight:500">${k}</td>
+        <td style="font-family:monospace;font-size:13px"><span id="apikey-${k}">${masked}</span>
+          <button class="btn btn-sm" style="background:#1e293b;color:#94a3b8" onclick="toggleMask('${k}','${val}')">👁</button>
+        </td>
+        <td><input type="text" id="new-${k}" placeholder="Ganti API key..." style="max-width:250px;display:inline-block">
+          <button class="btn btn-sm btn-primary" onclick="saveApiKey('${k}')">Save</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  document.getElementById('tab-config').innerHTML = html;
+}
+
+function toggleMask(key, val) {
+  const el = document.getElementById('apikey-' + key);
+  if (el.textContent.includes('••••')) {
+    el.textContent = val;
+  } else {
+    const masked = val.length > 8 ? val.substring(0, 4) + '••••' + val.substring(val.length - 4) : '••••••••';
+    el.textContent = masked;
+  }
+}
+
+async function saveApiKey(key) {
+  const value = document.getElementById('new-' + key).value.trim();
+  if (!value) return alert('Masukkan API key!');
+  await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key, value }) });
+  document.getElementById('new-' + key).value = '';
+  loadApiKeys();
+}
+
+// ==================== INIT ====================
+async function init() {
+  await loadStatus();
+  await loadSkills();
+  await loadWhitelist();
+  await loadSettings();
+  await loadApiKeys();
+  setInterval(loadStatus, 10000);
+}
+
+init();
+</script>
+</body>
+</html>

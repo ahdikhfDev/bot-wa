@@ -115,6 +115,8 @@ async function initDb() {
         )
     `);
 
+    initSkillsTable();
+    initSettingsTable();
     saveDb();
     console.log('💾 Database initialized');
 }
@@ -537,4 +539,149 @@ export function loadPendingBroadcasts() {
     } catch (err) {
         console.warn('⚠️ Gagal load pending broadcasts:', err.message);
     }
+}
+
+// ==================== SKILL SYSTEM ====================
+
+export function initSkillsTable() {
+    if (!db) return;
+    db.run(`
+        CREATE TABLE IF NOT EXISTS skills (
+            name TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            enabled INTEGER DEFAULT 1,
+            owner_only INTEGER DEFAULT 0,
+            group_only INTEGER DEFAULT 0,
+            has_config INTEGER DEFAULT 0,
+            commands TEXT DEFAULT '[]'
+        )
+    `);
+    db.run(`
+        CREATE TABLE IF NOT EXISTS skill_configs (
+            skill_name TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT DEFAULT '',
+            PRIMARY KEY (skill_name, key)
+        )
+    `);
+    saveDb();
+}
+
+export function registerSkill(name, title, description, commands, opts = {}) {
+    if (!db) return;
+    commands = JSON.stringify(commands || []);
+    const ownerOnly = opts.ownerOnly ? 1 : 0;
+    const groupOnly = opts.groupOnly ? 1 : 0;
+    const hasConfig = opts.hasConfig ? 1 : 0;
+    db.run(`
+        INSERT OR IGNORE INTO skills (name, title, description, enabled, owner_only, group_only, has_config, commands)
+        VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+    `, [name, title, description, ownerOnly, groupOnly, hasConfig, commands]);
+    saveDb();
+}
+
+export function getSkill(name) {
+    if (!db) return null;
+    const result = db.exec('SELECT * FROM skills WHERE name = ?', [name]);
+    if (!result.length || !result[0].values.length) return null;
+    const cols = result[0].columns;
+    const row = result[0].values[0];
+    const skill = {};
+    cols.forEach((c, i) => skill[c] = row[i]);
+    if (typeof skill.commands === 'string') {
+        try { skill.commands = JSON.parse(skill.commands); } catch { skill.commands = []; }
+    }
+    return skill;
+}
+
+export function getAllSkills() {
+    if (!db) return [];
+    const result = db.exec('SELECT * FROM skills ORDER BY name');
+    if (!result.length) return [];
+    const cols = result[0].columns;
+    return result[0].values.map(row => {
+        const skill = {};
+        cols.forEach((c, i) => skill[c] = row[i]);
+        if (typeof skill.commands === 'string') {
+            try { skill.commands = JSON.parse(skill.commands); } catch { skill.commands = []; }
+        }
+        return skill;
+    });
+}
+
+export function isSkillEnabled(name) {
+    if (!db) return true;
+    const result = db.exec('SELECT enabled FROM skills WHERE name = ?', [name]);
+    if (result.length && result[0].values.length) {
+        return result[0].values[0][0] === 1;
+    }
+    return true;
+}
+
+export function setSkillEnabled(name, enabled) {
+    if (!db) return;
+    db.run('UPDATE skills SET enabled = ? WHERE name = ?', [enabled ? 1 : 0, name]);
+    saveDb();
+}
+
+export function getSkillConfig(skillName, key, defaultValue = '') {
+    if (!db) return defaultValue;
+    const result = db.exec('SELECT value FROM skill_configs WHERE skill_name = ? AND key = ?', [skillName, key]);
+    if (result.length && result[0].values.length) {
+        return result[0].values[0][0] || defaultValue;
+    }
+    return defaultValue;
+}
+
+export function setSkillConfig(skillName, key, value) {
+    if (!db) return;
+    db.run('INSERT OR REPLACE INTO skill_configs (skill_name, key, value) VALUES (?, ?, ?)', [skillName, key, value]);
+    saveDb();
+}
+
+export function getAllSkillConfigs(skillName) {
+    if (!db) return {};
+    const result = db.exec('SELECT key, value FROM skill_configs WHERE skill_name = ?', [skillName]);
+    if (!result.length) return {};
+    const config = {};
+    result[0].values.forEach(row => { config[row[0]] = row[1]; });
+    return config;
+}
+
+// ==================== BOT SETTINGS (key-value) ====================
+
+export function initSettingsTable() {
+    if (!db) return;
+    db.run(`
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT DEFAULT ''
+        )
+    `);
+    saveDb();
+}
+
+export function getSetting(key, defaultValue = '') {
+    if (!db) return defaultValue;
+    const result = db.exec('SELECT value FROM bot_settings WHERE key = ?', [key]);
+    if (result.length && result[0].values.length) {
+        return result[0].values[0][0] || defaultValue;
+    }
+    return defaultValue;
+}
+
+export function setSetting(key, value) {
+    if (!db) return;
+    db.run('INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?, ?)', [key, value]);
+    saveDb();
+}
+
+export function getAllSettings() {
+    if (!db) return {};
+    const result = db.exec('SELECT key, value FROM bot_settings');
+    if (!result.length) return {};
+    const settings = {};
+    result[0].values.forEach(row => { settings[row[0]] = row[1]; });
+    return settings;
 }

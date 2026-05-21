@@ -1,11 +1,10 @@
-import { callAI, chatWithContext, transcribeAudio, callAIVision, getVoiceBuffer, extractAndStoreMemories, extractFromDocument, getLearningInterval } from '../services/ai.js';
-import { addContextMessage, getGroupHistory, getMode, isWhitelisted, addReminder, addMemory, getInteractionCount, incrementInteractionCount, resetInteractionCount, broadcastTargets, pendingBroadcasts, deletePendingBroadcast } from '../services/db.js';
-import { searchWeb, searchNews, formatSearchResults, detectSearchQuery } from '../services/search.js';
+import { callAI, chatWithContext, transcribeAudio, callAIVision, getVoiceBuffer, extractAndStoreMemories, extractFromDocument } from '../services/ai.js';
+import { addContextMessage, getGroupHistory, getMode, isWhitelisted, addMemory, getInteractionCount, incrementInteractionCount, resetInteractionCount, broadcastTargets, pendingBroadcasts, deletePendingBroadcast } from '../services/db.js';
 import { downloadMediaMessage } from 'baileys';
-import { Sticker, StickerTypes } from 'wa-sticker-formatter';
 import fs from 'fs/promises';
 import path from 'path';
-import * as cmd from './commands.js';
+import { findSkillByCommand, findSkillByNaturalLanguage, isSkillEnabled } from '../skills/_loader.js';
+import { formatSearchResults } from '../services/search.js';
 
 const PREFIX = process.env.BOT_PREFIX || '/';
 const GROUP_CONTEXT_ENABLED = process.env.GROUP_CONTEXT_ENABLED !== 'false';
@@ -25,16 +24,14 @@ export async function handleMessage(sock, msg) {
         let OWNER_LID = '36722373091439';
         let isOwner = senderNumber === OWNER_NUMBER || senderNumber === OWNER_LID;
 
-        // ==================== REMINDER DETECTION (FIRST! Sebelum apapun) ====================
-        const reminderData = extractReminder(messageContent);
-        if (reminderData && isOwner) {
-            addReminder(remoteJid, reminderData.triggerTimeMs, reminderData.message);
-            const timeStr = `${String(reminderData.hours).padStart(2, '0')}:${String(reminderData.minutes).padStart(2, '0')}`;
-            console.log(`🔔 REMINDER SET: ${reminderData.message} at ${timeStr} WIB for ${remoteJid}`);
-            await sock.sendMessage(remoteJid, {
-                text: `✅ *Tugas sudah diingetin! Jangan lupa ngerjainnya, bro!* 📚✨\n\nAku bakal ngingetin kamu jam *${timeStr}* nanti.`
-            });
-            return;
+        // ==================== BUILD CONTEXT OBJECT ====================
+        const context = { sock, msg, remoteJid, senderJid, senderNumber, isOwner };
+
+        // ==================== REMINDER DETECTION (sebelum apapun) ====================
+        const reminderSkill = findSkillByNaturalLanguage(messageContent);
+        if (reminderSkill && reminderSkill.skill.name === 'reminder') {
+            const handled = await reminderSkill.skill.execute(sock, remoteJid, messageContent, isOwner);
+            if (handled) return;
         }
 
         // ==================== ANTI-SPAM COOLDOWN ====================
@@ -45,17 +42,13 @@ export async function handleMessage(sock, msg) {
             spamCooldowns.set(remoteJid, now);
         }
 
-        let isAudio = false;
+        // ==================== MEDIA TYPE DETECTION ====================
+        let isAudio = false, isImage = false, isDocument = false;
+        let audioMsgToDownload = null, imageMsgToDownload = null, documentMsgToDownload = null;
 
         const msgType = Object.keys(msg.message || {}).find(
             type => !type.startsWith('contextInfo') && !type.endsWith('MessagePlaceholder')
         );
-
-        let audioMsgToDownload = null;
-        let isImage = false;
-        let imageMsgToDownload = null;
-        let isDocument = false;
-        let documentMsgToDownload = null;
 
         if (msgType === 'audioMessage') {
             isAudio = true;
@@ -73,7 +66,7 @@ export async function handleMessage(sock, msg) {
         } else {
             const contextInfo = msg.message?.[msgType]?.contextInfo || {};
             const quotedMsg = contextInfo.quotedMessage;
-            
+
             if (quotedMsg && quotedMsg.audioMessage) {
                 isAudio = true;
                 audioMsgToDownload = { key: msg.key, message: quotedMsg };
@@ -92,11 +85,9 @@ export async function handleMessage(sock, msg) {
         const isGroup = remoteJid.endsWith('@g.us');
         if (isGroup) broadcastTargets.set(remoteJid, msg.pushName || 'Unknown');
         const sender = msg.pushName || 'Unknown';
-        // Ambil nomor bot saja (tanpa @s.whatsapp.net dan tanpa :device)
         const botNumber = sock.user?.id?.split('@')[0]?.split(':')[0];
         const botLid = sock.user?.lid?.split('@')[0]?.split(':')[0];
 
-        // Cek apakah pesan mention bot atau private chat
         const contextInfo = msg.message?.[msgType]?.contextInfo || {};
         const mentionedJids = contextInfo.mentionedJid || [];
         const isMentionedByReply = (contextInfo.participant?.split('@')[0] === botNumber || contextInfo.participant?.split('@')[0] === botLid);
@@ -109,24 +100,18 @@ export async function handleMessage(sock, msg) {
         const isMentionedByText = rawText.includes(`@${botNumber}`) || rawText.toLowerCase().includes('thirty');
         const isMentioned = isMentionedByJid || isMentionedByText || isMentionedByReply;
         const isPrivateChat = !isGroup;
-        const isBot = msg.key.fromMe;
 
-        // Parse command atau chat message
         let text = messageContent.trim();
         let command = text.startsWith(PREFIX) ? text.slice(1).split(' ')[0].toLowerCase() : null;
         let args = text.split(' ').slice(1);
-        
-        // Ambil pesan yang di-reply (jika ada)
         const quotedText = getQuotedText(msg);
 
-        // Simpan SEMUA pesan (grup & private) ke dalam memori secara pasif
         if (GROUP_CONTEXT_ENABLED && text) {
             addContextMessage(remoteJid, sender, text);
         }
 
         console.log(`📨 [${isGroup ? 'GRUP' : 'DM'}] ${sender}: ${text.substring(0, 80)}`);
         if (command) console.log(`   → Command: ${command}`);
-        if (isGroup) console.log(`   → isMentioned: ${isMentioned}, botNumber: ${botNumber}`);
 
         // ==================== BROADCAST CONFIRMATION ====================
         if (isOwner && !command) {
@@ -149,48 +134,35 @@ export async function handleMessage(sock, msg) {
                     await sock.sendMessage(remoteJid, { text: '❌ Broadcast dibatalkan.' });
                     return;
                 }
-                // Kalau bukan y/n, lanjut ke handler normal (abaikan pending)
             }
         }
 
         // ==================== SECURITY & WHITELIST ====================
-        
-        // Owner bisa dikenali dari Nomor HP atau dari LID (Logical ID) jika di grup
         isOwner = senderNumber === OWNER_NUMBER || senderNumber === OWNER_LID;
-        
-        console.log(`   → senderJid: ${senderJid}, isOwner: ${isOwner} (owner in env: ${process.env.OWNER_NUMBER})`);
+        console.log(`   → senderJid: ${senderJid}, isOwner: ${isOwner}`);
 
-        // Cek apakah pengirim atau grup tersebut sudah di-whitelist
         const isAuthorized = isOwner || isWhitelisted(remoteJid) || isWhitelisted(senderJid);
-
         if (!isAuthorized) {
-            // Hanya merespon jika ada yang mencoba command atau tag bot secara eksplisit
             if (command || isMentioned) {
                 await sock.sendMessage(remoteJid, { text: '⛔ *Akses Ditolak*\nMaaf, Anda tidak memiliki izin untuk menggunakan bot ini. Silakan hubungi Maha Raja Ahdi Khalida Fathir.' });
             }
             return;
         }
 
-        // ==================== AUDIO / VOICE NOTE HANDLING ====================
+        // ==================== AUDIO / VOICE NOTE ====================
         if (isAudio && (isPrivateChat || (isGroup && isMentioned))) {
             await sock.sendMessage(remoteJid, { text: '⏳ _Mendengarkan Voice Note..._' });
             try {
                 const buffer = await downloadMediaMessage(
-                    audioMsgToDownload,
-                    'buffer',
-                    {},
+                    audioMsgToDownload, 'buffer', {},
                     { logger: console, reuploadRequest: sock.updateMediaMessage }
                 );
-                
                 const tempPath = path.join(process.cwd(), `temp_${Date.now()}.ogg`);
                 await fs.writeFile(tempPath, buffer);
-                
                 const transcript = await transcribeAudio(tempPath);
-                await fs.unlink(tempPath).catch(()=>{}); // clean up
-                
+                await fs.unlink(tempPath).catch(() => {});
                 if (transcript) {
-                    // Gabungkan transkrip dengan pesan asli (misal: user bilang "@Thirty apa ini?")
-                    text = `(Teks dari Voice Note: "${transcript}")\n\nPesan User: ${text}`; 
+                    text = `(Teks dari Voice Note: "${transcript}")\n\nPesan User: ${text}`;
                     await sock.sendMessage(remoteJid, { text: `🎙️ *(Transkrip VN):*\n"${transcript}"` });
                 } else {
                     await sock.sendMessage(remoteJid, { text: '❌ Gagal mendengarkan Voice Note.' });
@@ -203,26 +175,20 @@ export async function handleMessage(sock, msg) {
             }
         }
 
-        // ==================== IMAGE / VISION HANDLING ====================
+        // ==================== IMAGE / VISION ====================
         if (isImage && (isPrivateChat || (isGroup && isMentioned))) {
             await sock.sendMessage(remoteJid, { text: '👁️ _Sedang melihat gambar..._' });
             try {
                 const buffer = await downloadMediaMessage(
-                    imageMsgToDownload,
-                    'buffer',
-                    {},
+                    imageMsgToDownload, 'buffer', {},
                     { logger: console, reuploadRequest: sock.updateMediaMessage }
                 );
-                
                 const base64Image = buffer.toString('base64');
                 const mode = getMode(remoteJid);
-                
-                // Gunakan caption pesan (jika ada) sebagai prompt untuk Vision
                 const prompt = (text && text !== '[Gambar]') ? text : null;
                 const response = await callAIVision(prompt, base64Image, mode, remoteJid);
-                
                 await sock.sendMessage(remoteJid, { text: response });
-                return; // Berhenti di sini untuk pesan gambar
+                return;
             } catch (err) {
                 console.error('Vision processing error:', err);
                 await sock.sendMessage(remoteJid, { text: '❌ Terjadi kesalahan saat memproses gambar.' });
@@ -230,14 +196,12 @@ export async function handleMessage(sock, msg) {
             }
         }
 
-        // ==================== DOCUMENT / PDF HANDLING ====================
+        // ==================== DOCUMENT / PDF ====================
         if (isDocument && (isPrivateChat || (isGroup && isMentioned))) {
             await sock.sendMessage(remoteJid, { text: '📄 _Membaca dokumen..._' });
             try {
                 const buffer = await downloadMediaMessage(
-                    documentMsgToDownload,
-                    'buffer',
-                    {},
+                    documentMsgToDownload, 'buffer', {},
                     { logger: console, reuploadRequest: sock.updateMediaMessage }
                 );
 
@@ -274,11 +238,9 @@ export async function handleMessage(sock, msg) {
                 const response = await callAI(`Isi dokumen: """${docText.substring(0, 2000)}"""\n\nPertanyaan: ${caption}`, [], mode, remoteJid);
                 await sock.sendMessage(remoteJid, { text: `📄 *${fileName}*\n\n${response}` });
 
-                // Simpan konten dokumen ke memori dengan confidence tinggi
                 addMemory(remoteJid, `Isi dokumen "${fileName}": ${docText.substring(0, 500)}`, 'document', 10, 'document');
                 addMemory(remoteJid, `Ringkasan "${fileName}": ${response.substring(0, 300)}`, 'document', 10, 'document');
 
-                // Ekstrak pengetahuan tambahan (async)
                 if (docText.length > 100) {
                     extractFromDocument(remoteJid, docText, fileName).catch(() => {});
                 }
@@ -290,153 +252,80 @@ export async function handleMessage(sock, msg) {
             }
         }
 
-        // Hitung ulang command & args jika teks berubah (hasil transkrip)
+        // Re-parse command & args in case text changed (transcript)
         command = text.startsWith(PREFIX) ? text.slice(1).split(' ')[0].toLowerCase() : null;
         args = text.split(' ').slice(1);
 
-        // ==================== COMMAND DISPATCH ====================
-        const dispatch = {
-            'allow': () => cmd.cmdAllow(sock, remoteJid, isOwner, mentionedJids, args),
-            'ban': () => cmd.cmdBan(sock, remoteJid, isOwner, mentionedJids, args),
-            'list': () => cmd.cmdList(sock, remoteJid, isOwner),
-            'say': () => cmd.cmdSay(sock, remoteJid, args),
-            's': () => cmdSticker(sock, remoteJid, isGroup, sender, args, null),
-            'sticker': () => cmdSticker(sock, remoteJid, isGroup, sender, args, null),
-            'help': () => cmd.cmdHelp(sock, remoteJid),
-            'mode': () => cmd.cmdMode(sock, remoteJid, args),
-            'rangkum': () => cmd.cmdRangkum(sock, remoteJid, args),
-            'jadwal': () => cmd.cmdJadwal(sock, remoteJid, isGroup, args, sender),
-            'reset': () => cmd.cmdReset(sock, remoteJid, isOwner, isGroup),
-            'search': () => cmd.cmdSearch(sock, remoteJid, args),
-            'cari': () => cmd.cmdSearch(sock, remoteJid, args),
-            'translate': () => cmd.cmdTranslate(sock, remoteJid, args, quotedText),
-            'tr': () => cmd.cmdTranslate(sock, remoteJid, args, quotedText),
-            'terjemahkan': () => cmd.cmdTranslate(sock, remoteJid, args, quotedText),
-            'weather': () => cmd.cmdWeather(sock, remoteJid, args),
-            'cuaca': () => cmd.cmdWeather(sock, remoteJid, args),
-            'broadcast': () => cmd.cmdBroadcast(sock, remoteJid, args, text),
-            'bc': () => cmd.cmdBroadcast(sock, remoteJid, args, text),
-            'template': () => cmd.cmdTemplate(sock, remoteJid, args, text),
-            'tpl': () => cmd.cmdTemplate(sock, remoteJid, args, text),
-            'kurs': () => cmd.cmdKurs(sock, remoteJid, args),
-            'rate': () => cmd.cmdKurs(sock, remoteJid, args),
-            'hn': () => cmd.cmdHN(sock, remoteJid),
-            'hackernews': () => cmd.cmdHN(sock, remoteJid),
-            'tv': () => cmd.cmdTV(sock, remoteJid, args),
-            'tvshow': () => cmd.cmdTV(sock, remoteJid, args),
-            'ip': () => cmd.cmdIP(sock, remoteJid),
-            'ipinfo': () => cmd.cmdIP(sock, remoteJid),
-            'qr': () => cmd.cmdQR(sock, remoteJid, args),
-            'qrcode': () => cmd.cmdQR(sock, remoteJid, args),
-        };
-
-        if (command && dispatch[command]) {
-            // Owner-only check for sensitive commands
-            if (['allow', 'ban', 'list', 'broadcast', 'bc', 'template', 'tpl', 'reset'].includes(command) && !isOwner) {
-                await sock.sendMessage(remoteJid, { text: '⛔ *Akses Ditolak*\nHanya Maha Raja yang bisa.' });
+        // ==================== SKILL COMMAND DISPATCH ====================
+        if (command) {
+            const skill = findSkillByCommand(command);
+            if (skill) {
+                // Check owner-only
+                if (skill.ownerOnly && !isOwner) {
+                    await sock.sendMessage(remoteJid, { text: '⛔ *Akses Ditolak*\nHanya Maha Raja yang bisa.' });
+                    return;
+                }
+                // Check group-only
+                if (skill.groupOnly && !isGroup) {
+                    await sock.sendMessage(remoteJid, { text: '❌ Command ini hanya bisa dipakai di grup.' });
+                    return;
+                }
+                await skill.handler(sock, remoteJid, args, {
+                    command, isOwner, isGroup, msg, sender, text,
+                    mentionedJids, quotedText, GROUP_CONTEXT_ENABLED, isAudio
+                });
                 return;
             }
-            await dispatch[command]();
-            return;
         }
 
         // ==================== SEARCH KEYWORD DETECTION ====================
         if (!command && (isPrivateChat || (isGroup && isMentioned))) {
-            const searchDetect = detectSearchQuery(text);
-            if (searchDetect) {
+            const nlMatch = findSkillByNaturalLanguage(text);
+            if (nlMatch && nlMatch.skill.name === 'search') {
+                const result = nlMatch.result;
                 await sock.sendPresenceUpdate('composing', remoteJid);
-                await sock.sendMessage(remoteJid, { text: `🔍 *Mencari ${searchDetect.type === 'news' ? 'berita' : 'info'} tentang:* ${searchDetect.query}...` });
-                const results = searchDetect.type === 'news'
-                    ? await searchNews(searchDetect.query)
-                    : await searchWeb(searchDetect.query);
+                const { searchWeb, searchNews } = await import('../services/search.js');
+                await sock.sendMessage(remoteJid, { text: `🔍 *Mencari ${result.type === 'news' ? 'berita' : 'info'} tentang:* ${result.query}...` });
+                const results = result.type === 'news'
+                    ? await searchNews(result.query)
+                    : await searchWeb(result.query);
                 await sock.sendMessage(remoteJid, { text: formatSearchResults(results) });
                 return;
             }
         }
 
-        // ==================== AI CHAT (Context-aware) ====================
-
+        // ==================== AI CHAT ====================
         if (isPrivateChat || (isGroup && isMentioned)) {
-            // Kirim typing indicator
-            await sock.sendPresenceUpdate('composing', remoteJid);
-
-            // Ambil mode AI untuk chat ini
-            const mode = getMode(remoteJid);
-
-            // Panggil AI dengan context (yang sudah tersimpan secara pasif)
-            let history = [];
-            if (GROUP_CONTEXT_ENABLED) {
-                history = getGroupHistory(remoteJid);
-            }
-
-            // Gabungkan pesan yang di-reply (jika ada) ke dalam prompt agar bot paham
-            let promptText = text;
-            if (quotedText) {
-                promptText = `(Membalas pesan: "${quotedText}")\n\n${text}`;
-            }
-
-            const response = history.length > 0
-                ? await chatWithContext(promptText, history, mode, remoteJid)
-                : await callAI(promptText, [], mode, remoteJid);
-
-            // Jika user mengirim VN, balas dengan VN juga (PTT)
-            if (isAudio) {
-                const voiceBuffer = await getVoiceBuffer(response);
-                if (voiceBuffer) {
-                    await sock.sendMessage(remoteJid, { 
-                        audio: voiceBuffer, 
-                        mimetype: 'audio/ogg; codecs=opus', 
-                        ptt: true 
-                    }, { quoted: msg });
-                    
-                    if (GROUP_CONTEXT_ENABLED) {
-                        addContextMessage(remoteJid, 'Thirty (Bot)', response);
-                    }
-                    return;
+            const aiSkill = findSkillByCommand('__ai__');
+            if (aiSkill) {
+                await aiSkill.respond(sock, remoteJid, text, {
+                    msg, isGroup, isMentioned, isPrivateChat, isAudio,
+                    GROUP_CONTEXT_ENABLED, quotedText
+                });
+            } else {
+                // Fallback: direct AI call
+                await sock.sendPresenceUpdate('composing', remoteJid);
+                const mode = getMode(remoteJid);
+                let history = [];
+                if (GROUP_CONTEXT_ENABLED) {
+                    history = getGroupHistory(remoteJid);
+                }
+                let promptText = text;
+                if (quotedText) {
+                    promptText = `(Membalas pesan: "${quotedText}")\n\n${text}`;
+                }
+                const response = history.length > 0
+                    ? await chatWithContext(promptText, history, mode, remoteJid)
+                    : await callAI(promptText, [], mode, remoteJid);
+                await sock.sendMessage(remoteJid, { text: response }, { quoted: msg }).catch(() => {
+                    sock.sendMessage(remoteJid, { text: response });
+                });
+                if (GROUP_CONTEXT_ENABLED) {
+                    addContextMessage(remoteJid, 'Thirty (Bot)', response);
                 }
             }
-
-            console.log('DEBUG: Sending response to WhatsApp:', response);
-            try {
-                // Coba kirim dengan me-reply pesan user
-                await sock.sendMessage(remoteJid, { text: response }, { quoted: msg });
-                console.log('DEBUG: Send promise resolved (with quote)!');
-            } catch (sendErr) {
-                console.warn('⚠️ Gagal mengirim dengan quote, mencoba tanpa quote...', sendErr.message);
-                // Jika gagal karena struktur quote error, kirim tanpa quote
-                await sock.sendMessage(remoteJid, { text: response });
-                console.log('DEBUG: Send promise resolved (without quote)!');
-            }
-            
-            // Simpan jawaban bot ke dalam memori agar bot ingat apa yang dia katakan
-            if (GROUP_CONTEXT_ENABLED) {
-                addContextMessage(remoteJid, 'Thirty (Bot)', response);
-            }
-
-            // LEARNING ENGINE: Track interactions & extract memories periodically
-            if (GROUP_CONTEXT_ENABLED) {
-                incrementInteractionCount(remoteJid);
-                const count = getInteractionCount(remoteJid);
-                const interval = getLearningInterval();
-                if (count >= interval) {
-                    console.log(`🧠 Learning trigger hit for ${remoteJid} (${count} interactions), extracting memories...`);
-                    const history = getGroupHistory(remoteJid, 20);
-                    extractAndStoreMemories(remoteJid, history);
-                    resetInteractionCount(remoteJid);
-                }
-            }
-
             return;
         }
-
-        // ==================== AUTO REPLY (Optional) ====================
-        // Jika di grup dan Auto Reply enabled, bisa aktifkan ini:
-        /*
-        if (isGroup && process.env.AUTO_REPLY === 'true') {
-            addContextMessage(remoteJid, sender, text);
-            // ... logic auto reply
-        }
-        */
 
     } catch (error) {
         console.error('❌ Error handling message:', error.message);
@@ -446,90 +335,18 @@ export async function handleMessage(sock, msg) {
     }
 }
 
-// ==================== REMINDER EXTRACTOR ====================
-
-function extractReminder(text) {
-    if (!text) return null;
-    const lower = text.toLowerCase();
-    const hasReminderKeyword = /(?:ng)?ing(?:at|et)|reminder/i.test(lower);
-    if (!hasReminderKeyword) return null;
-
-    const nowUtc = Date.now();
-    const WIB_MS = 7 * 3600000;
-
-    // Helper: ambil teks message (bersihin keyword)
-    function cleanMsg(t, timeStr) {
-        return t
-            .replace(timeStr, '')
-            .replace(/thirty\s*/i, '')
-            .replace(/(?:jam|pukul)\s*/i, '')
-            .replace(/(?:ng)?ing(?:at|et)(?:kan|in|inin)?(?:\s+(?:saya|aku|gw|gue|lo|lu|elu))?\s*/i, '')
-            .replace(/\breminder\s*/i, '')
-            .replace(/\s+(buat|untuk|supaya|biar)\s+/i, ' ')
-            .replace(/\s+/g, ' ')
-            .trim() || 'Ada tugas/pekerjaan';
-    }
-
-    // 1. Relative time: "N menit/jam lagi"
-    const relMatch = lower.match(/(\d+)\s*(menit|jam)\s*(lagi|ke depan|from now)?/i);
-    if (relMatch) {
-        const amount = parseInt(relMatch[1]);
-        const unit = relMatch[2].toLowerCase();
-        const ms = unit === 'jam' ? amount * 3600000 : amount * 60000;
-        const triggerTimeMs = nowUtc + ms;
-        const message = cleanMsg(text, relMatch[0]);
-        const d = new Date(triggerTimeMs + WIB_MS);
-        const hours = d.getUTCHours();
-        const minutes = d.getUTCMinutes();
-        console.log(`🧠 extractReminder (relative): \"${text}\" → \"${message}\" in ${amount} ${unit}`);
-        return { triggerTimeMs, message, hours, minutes };
-    }
-
-    // 2. Day reference + time: "besok jam 7", "nanti malem jam 8", "lusa jam 14:30"
-    const dayKeywords = { besok: 1, lusa: 2, 'nanti': 0 };
-    let dayOffset = 0;
-    for (const [word, offset] of Object.entries(dayKeywords)) {
-        if (lower.includes(word)) {
-            dayOffset = offset;
-            break;
-        }
-    }
-
-    // 3. Absolute time: HH:MM
-    const timePattern = /(\d{1,2})[.:](\d{2})/;
-    const timeMatch = text.match(timePattern);
-    if (!timeMatch) return null;
-
-    const hours = parseInt(timeMatch[1]);
-    const minutes = parseInt(timeMatch[2]);
-    if (hours > 23 || minutes > 59) return null;
-
-    const d = new Date(nowUtc + WIB_MS);
-    let targetWib = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + dayOffset, hours, minutes, 0) - WIB_MS;
-    if (targetWib <= nowUtc && dayOffset === 0) targetWib += 86400000;
-
-    const message = cleanMsg(text, timeMatch[0]);
-
-    console.log(`🧠 extractReminder: \"${text}\" → \"${message}\" at ${hours}:${minutes} WIB${dayOffset > 0 ? ` +${dayOffset} day` : ''}`);
-    return { triggerTimeMs: targetWib, message, hours, minutes };
-}
-
 // ==================== HELPER FUNCTIONS ====================
 
 function getMessageText(msg) {
     const msgType = Object.keys(msg.message || {}).find(
         type => !type.startsWith('contextInfo') && !type.endsWith('MessagePlaceholder')
     );
-
     if (!msgType) return null;
 
     const messageObj = msg.message[msgType];
-
-    // Handle different message types
     if (messageObj?.text) return messageObj.text;
     if (messageObj?.caption) return messageObj.caption;
     if (typeof messageObj === 'string') return messageObj;
-
     return null;
 }
 
@@ -541,22 +358,18 @@ function getQuotedText(msg) {
 
     const contextInfo = msg.message?.[msgType]?.contextInfo;
     const quotedMsg = contextInfo?.quotedMessage;
-    
     if (!quotedMsg) return null;
 
     const quotedType = Object.keys(quotedMsg).find(
         type => !type.startsWith('contextInfo') && !type.endsWith('MessagePlaceholder')
     );
-
     if (!quotedType) return null;
 
     const messageObj = quotedMsg[quotedType];
-
     if (messageObj?.text) return messageObj.text;
     if (messageObj?.caption) return messageObj.caption;
     if (typeof messageObj === 'string') return messageObj;
-    
-    // Return placeholders untuk tipe media/file agar AI tahu apa yang sedang di-reply
+
     if (quotedType === 'imageMessage') return '[Gambar]';
     if (quotedType === 'videoMessage') return '[Video]';
     if (quotedType === 'audioMessage') return '[Voice Note / Audio]';
@@ -564,113 +377,4 @@ function getQuotedText(msg) {
     if (quotedType === 'documentMessage') return `[Dokumen: ${messageObj.title || messageObj.fileName || 'File'}]`;
 
     return '[Pesan/Media Tidak Dikenal]';
-}
-
-async function sendHelp(sock, jid) {
-    const helpText = `✨ *THIRTY AI - Command Center* ✨
-
-Halo! Saya adalah *Thirty*, asisten AI cerdas yang siap membantu kebutuhanmu. 🤖🦾
-
-🤖 *PENGATURAN AI*
-• 🎨 */mode* : Ganti kepribadian (asik, bad, formal, profesional)
-   asik → teman nongkrong, santai, gaul
-   bad → kasar, toxic, savage
-   formal → baku, sopan, EYD
-   profesional → konsultan senior, taktis
-
-🛠️ *FITUR MULTIMEDIA & SEARCH*
-• 🔍 */search* atau "cari [query]" : Cari info di web
-• 📰 */cari [berita]* atau "berita [query]" : Cari berita terbaru
-• 🎙️ *Voice Note* : Kirim VN, saya dengerin & balas VN
-• 👁️ *Vision AI* : Balas foto untuk saya analisis
-• 🎨 */s* atau */sticker* : Ubah foto jadi stiker
-• 🗣️ */say [teks]* : Suruh saya bicara (Voice Note)
-• 📄 *Dokumen/PDF* : Kirim file, saya baca & jelaskan
-
-🌍 *FITUR UTILITY*
-• 🌤️ */cuaca [kota]* : Cek cuaca (atau */weather*)
-• 💱 */kurs [dari] [ke]* : Kurs mata uang (contoh: /kurs usd idr)
-• 📰 */hn* atau */hackernews* : Berita teknologi teratas
-• 📺 */tv [judul]* : Cari info acara TV
-• 🌐 */ip* : Cek IP publik
-• 🔳 */qr [teks]* : Generate QR code
-• 🌍 */translate [teks]* : Terjemahkan ke Indonesia (atau reply + /tr)
-• 🧠 *Auto Learning* : Bot belajar dari percakapan — makin ngobrol makin pinter
-• 🧠 *RAG Memory* : Bot ingat topik lama & konten dokumen
-• 📝 */rangkum [teks]* : Ringkas teks panjang
-
-📅 *PRODUKTIVITAS*
-• 🕒 *Auto Reminder* : "Ingatkan saya [jam] buat [acara]"
-• 📅 */jadwal list* : Lihat jadwal grup
-
-👑 *OWNER ONLY*
-• 📢 */broadcast list* : Lihat daftar grup
-• 📢 */broadcast kirim [pesan]* : Kirim ke SEMUA grup
-• 📢 */broadcast kirim 1 3 [pesan]* : Kirim ke grup tertentu aja
-• 📋 */template list* : Lihat template pesan siap pakai
-• 📋 */template kirim [nama]* : Kirim template ke grup
-• 📋 */template isi [nama] [field=nilai]* : Isi field & kirim template
-
-💡 *TIPS:*
-• Di *Grup*, saya respon jika dipanggil "Thirty", di-mention, atau reply pesan saya.
-• Di *Private Chat*, ngobrol langsung kapan aja!
-
-Ciptaan: *Maha Raja Ahdi Khalida Fathir* 👑`.trim();
-
-    await sock.sendMessage(jid, { text: helpText });
-}
-
-async function handleJadwalCommand(sock, jid, isGroup, args, sender) {
-    if (!isGroup) {
-        await sock.sendMessage(jid, { text: '❌ Command jadwal hanya bisa dipakai di grup.' });
-        return;
-    }
-
-    const subCommand = args[0]?.toLowerCase();
-
-    if (!subCommand || subCommand === 'list') {
-        const jadwal = getJadwal(jid);
-        if (jadwal.length === 0) {
-            await sock.sendMessage(jid, { text: '📅 Belum ada jadwal di grup ini.\nTambah dengan: /jadwal add [tanggal] [event]' });
-            return;
-        }
-
-        const listText = '📅 *Daftar Jadwal:*\n' +
-            jadwal.map(j => `${j.id}. [${j.tanggal}] ${j.event}`).join('\n');
-
-        await sock.sendMessage(jid, { text: listText });
-        return;
-    }
-
-    if (subCommand === 'add') {
-        const tanggal = args[1];
-        const event = args.slice(2).join(' ');
-
-        if (!tanggal || !event) {
-            await sock.sendMessage(jid, { text: '❌ Usage: /jadwal add [tanggal] [event]\nContoh: /jadwal add 2025-05-20 Meeting tim' });
-            return;
-        }
-
-        addJadwal(jid, tanggal, event);
-        await sock.sendMessage(jid, { text: `✅ Jadwal ditambahkan!\n📅 ${tanggal}: ${event}` });
-        return;
-    }
-
-    if (subCommand === 'del') {
-        const id = parseInt(args[1]);
-        if (!id) {
-            await sock.sendMessage(jid, { text: '❌ Usage: /jadwal del [id]' });
-            return;
-        }
-
-        const deleted = deleteJadwal(id, jid);
-        if (deleted) {
-            await sock.sendMessage(jid, { text: `✅ Jadwal #${id} dihapus.` });
-        } else {
-            await sock.sendMessage(jid, { text: '❌ Jadwal tidak ditemukan.' });
-        }
-        return;
-    }
-
-    await sock.sendMessage(jid, { text: '❌ Command tidak valid. Ketik /help untuk bantuan.' });
 }

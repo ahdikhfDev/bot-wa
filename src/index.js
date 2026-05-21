@@ -5,6 +5,8 @@ import QRCode from 'qrcode-terminal';
 import { handleMessage } from './handlers/message.js';
 import { initDatabase, getPendingReminders, markReminderDone, broadcastTargets, loadPendingBroadcasts, deletePendingBroadcast } from './services/db.js';
 import { log, error } from './utils/logger.js';
+import { loadSkills } from './skills/_loader.js';
+import { startServer, setSock, incrementMessageCount } from './server/index.js';
 
 const msgDedup = new Set();
 const DEDUP_WINDOW = 3000;
@@ -16,6 +18,8 @@ async function startBot() {
     console.log('🚀 Starting WA Bot AI...\n');
     console.log(`🔄 Attempt: ${reconnectAttempts + 1}\n`);
     await initDatabase();
+    await loadSkills();
+    startServer();
 
     // Load session dari file auth
     const { state, saveCreds } = await useMultiFileAuthState('./auth_session');
@@ -77,6 +81,7 @@ async function startBot() {
         } else if (connection === 'open') {
             console.log('✅ WhatsApp connected!\n');
             reconnectAttempts = 0;
+            setSock(sock);
 
             // Load all groups for broadcast
             try {
@@ -122,6 +127,7 @@ async function startBot() {
 
             log('MSG', `Dari ${msg.pushName || 'Unknown'}`, { id: dedupKey });
 
+            incrementMessageCount();
             await handleMessage(sock, msg).catch(err => {
                 error('Gagal handle message', err);
             });
