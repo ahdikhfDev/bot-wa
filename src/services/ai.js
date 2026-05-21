@@ -410,6 +410,10 @@ ${promptRules}`;
     }
 }
 
+export async function summarizeText(text, mode = 'asik', chatId = null) {
+    return callAI(`Rangkum teks berikut dengan ringkas dan jelas:\n\n${text}`, [], mode, chatId, '');
+}
+
 let _intentCache = new Map();
 
 export function classifyIntentSync(prompt) {
