@@ -6,17 +6,68 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import os from 'os';
 import { PassThrough } from 'stream';
-import { addReminder, getMemories, searchMemoriesRAG, searchMemories, addMemory } from './db.js';
+import { addReminder, getMemories, searchMemoriesRAG, searchMemories, addMemory, getSetting, setSetting } from './db.js';
 
 // Use system ffmpeg on Linux (STB) for better compatibility, static on Windows
 const actualFfmpegPath = os.platform() === 'win32' ? ffmpegPath : 'ffmpeg';
 ffmpeg.setFfmpegPath(actualFfmpegPath);
 
-const client = new Groq({
-    apiKey: process.env.GROQ_API_KEY,
-});
+let _client = null;
+let _activeModel = null;
 
-const MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+export function getGroqClient() {
+    if (_client) return _client;
+    const apiKey = getSetting('GROQ_API_KEY') || process.env.GROQ_API_KEY;
+    if (!apiKey) throw new Error('GROQ_API_KEY tidak dikonfigurasi. Set dulu via Web Dashboard.');
+    _client = new Groq({ apiKey });
+    return _client;
+}
+
+export function getModel() {
+    if (_activeModel) return _activeModel;
+    _activeModel = getSetting('GROQ_MODEL') || process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+    return _activeModel;
+}
+
+export function reloadAI() {
+    _client = null;
+    _activeModel = null;
+    console.log('🔄 AI service reloaded (key & model from DB)');
+}
+
+export async function fetchAvailableModels() {
+    try {
+        const apiKey = getSetting('GROQ_API_KEY') || process.env.GROQ_API_KEY;
+        if (!apiKey) return [];
+        const resp = await fetch('https://api.groq.com/openai/v1/models', {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (!resp.ok) return [];
+        const data = await resp.json();
+        const chatModels = (data.data || [])
+            .filter(m => m.active && m.id && !m.id.includes('whisper') && !m.id.startsWith('text-'))
+            .map(m => ({ id: m.id, owned: m.owned_by || '' }))
+            .sort((a, b) => a.id.localeCompare(b.id));
+        return chatModels;
+    } catch {
+        return [];
+    }
+}
+
+export function getFallbackModels() {
+    const primary = getModel();
+    const known = [
+        'llama-3.3-70b-versatile',
+        'deepseek-r1-distill-llama-70b',
+        'llama-4-scout-17b-16e-instruct',
+        'llama-4-maverick-17b-128e-instruct',
+        'llama-3.1-70b-versatile',
+        'llama-3.1-8b-instant',
+        'gemma2-9b-it',
+        'mixtral-8x7b-32768',
+    ];
+    return [primary, ...known.filter(m => m !== primary)];
+}
 
 const MODES = {
     asik: `IDENTITAS — Kamu adalah teman deket yang nyambung dan apa adanya. Bukan asisten, bukan robot—temen ngobrol.
@@ -124,13 +175,7 @@ const MODE_TEMPERATURES = {
     profesional: 0.6,
 };
 
-const FALLBACK_MODELS = [
-    process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
-    'deepseek-r1-distill-llama-70b',
-    'llama-3.1-70b-versatile',
-    'llama-3.1-8b-instant',
-    'gemma2-9b-it',
-];
+// FALLBACK_MODELS replaced by getFallbackModels()
 
 const REMINDER_TOOL = {
     type: 'function',
@@ -222,9 +267,10 @@ ${promptRules}`;
             { role: 'user', content: prompt },
         ];
 
-        // Looping fitur AUTO FALLBACK MODEL
-        for (let i = 0; i < FALLBACK_MODELS.length; i++) {
-            const currentModel = FALLBACK_MODELS[i];
+        const client = getGroqClient();
+        const fbModels = getFallbackModels();
+        for (let i = 0; i < fbModels.length; i++) {
+            const currentModel = fbModels[i];
             try {
                 let completion = await client.chat.completions.create({
                     model: currentModel,
@@ -349,7 +395,7 @@ export async function chatWithContext(userMessage, groupHistory, mode = 'asik', 
 
 export async function transcribeAudio(filePath) {
     try {
-        const transcription = await client.audio.transcriptions.create({
+        const transcription = await getGroqClient().audio.transcriptions.create({
             file: fs.createReadStream(filePath),
             model: "whisper-large-v3-turbo",
             language: "id"
@@ -407,7 +453,7 @@ ${personality}
 
 ${promptRules}`;
 
-        const completion = await client.chat.completions.create({
+        const completion = await getGroqClient().chat.completions.create({
             model: "meta-llama/llama-4-scout-17b-16e-instruct",
             messages: [
                 { role: 'system', content: SYSTEM_PROMPT },
@@ -541,7 +587,7 @@ export async function extractAndStoreMemories(chatId, recentHistory) {
         .join('\n');
 
     try {
-        const completion = await client.chat.completions.create({
+        const completion = await getGroqClient().chat.completions.create({
             model: 'llama-3.1-8b-instant',
             messages: [
                 {
@@ -603,7 +649,7 @@ export async function extractFromDocument(chatId, docText, fileName) {
     if (!chatId || !docText || docText.length < 50) return;
 
     try {
-        const completion = await client.chat.completions.create({
+        const completion = await getGroqClient().chat.completions.create({
             model: 'llama-3.1-8b-instant',
             messages: [
                 {

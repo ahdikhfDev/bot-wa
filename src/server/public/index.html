@@ -385,32 +385,49 @@ async function saveSetting(key) {
   loadSettings();
 }
 
-// ==================== API KEYS ====================
+// ==================== API KEYS & MODELS ====================
 async function loadApiKeys() {
   const settings = await api('/api/settings');
-  const apiKeys = Object.keys(settings).filter(k => k.toLowerCase().includes('api') || k.toLowerCase().includes('key') || k === 'GROQ_API_KEY' || k === 'TAVILY_API_KEY');
+  const apiKeys = Object.keys(settings).filter(k => k.toLowerCase().includes('api') || k.toLowerCase().includes('key') || k === 'GROQ_API_KEY' || k === 'TAVILY_API_KEY' || k === 'OPENAI_API_KEY');
   let html = `<h3 style="font-size:16px;margin-bottom:8px">🔑 API Keys</h3>
-  <p class="text-muted" style="font-size:13px;margin-bottom:16px">Kelola API key untuk layanan eksternal</p>`;
+  <p class="text-muted" style="font-size:13px;margin-bottom:16px">Set API key, nanti model会自动 terdeteksi</p>
+  <table><thead><tr><th>Service</th><th>API Key</th><th>Aksi</th></tr></thead><tbody>`;
   if (!apiKeys.length) {
-    html += '<div class="empty">Belum ada API key disimpan. Tambah via Settings tab.</div>';
-  } else {
-    html += `<table><thead><tr><th>Service</th><th>API Key</th><th>Aksi</th></tr></thead><tbody>`;
-    for (const k of apiKeys) {
-      const val = settings[k] || '';
-      const masked = val.length > 8 ? val.substring(0, 4) + '••••' + val.substring(val.length - 4) : '••••••••';
-      html += `<tr>
-        <td style="font-weight:500">${k}</td>
-        <td style="font-family:monospace;font-size:13px"><span id="apikey-${k}">${masked}</span>
-          <button class="btn btn-sm" style="background:#1e293b;color:#94a3b8" onclick="toggleMask('${k}','${val}')">👁</button>
-        </td>
-        <td><input type="text" id="new-${k}" placeholder="Ganti API key..." style="max-width:250px;display:inline-block">
-          <button class="btn btn-sm btn-primary" onclick="saveApiKey('${k}')">Save</button>
-        </td>
-      </tr>`;
-    }
-    html += '</tbody></table>';
+    html += '<tr><td colspan="3" class="empty">Belum ada API key</td></tr>';
   }
+  for (const k of apiKeys) {
+    const val = settings[k] || '';
+    const masked = val.length > 8 ? val.substring(0, 4) + '••••' + val.substring(val.length - 4) : '••••••••';
+    html += `<tr>
+      <td style="font-weight:500">${k}</td>
+      <td style="font-family:monospace;font-size:13px">
+        <span id="apikey-${k}">${masked}</span>
+        <button class="btn btn-sm" style="background:#1e293b;color:#94a3b8" onclick="toggleMask('${k}','${val.replace(/'/g, "\\'")}')">👁</button>
+      </td>
+      <td><input type="text" id="new-${k}" placeholder="Ganti API key..." style="max-width:200px;display:inline-block">
+        <button class="btn btn-sm btn-primary" onclick="saveApiKey('${k}')">Save</button>
+      </td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+
+  // Model section
+  html += `<div class="card" style="margin-top:20px">
+    <div class="flex flex-between">
+      <div><h3 style="font-size:16px">🧠 Model AI</h3>
+      <p class="text-muted" style="font-size:13px">Pilih model untuk chat & AI</p></div>
+      <button class="btn btn-sm btn-primary" onclick="refreshModels()">🔄 Deteksi Model</button>
+    </div>
+    <div style="margin-top:12px">
+      <select id="modelSelect" style="max-width:400px" onchange="saveModel(this.value)">
+        <option value="">Loading models...</option>
+      </select>
+    </div>
+    <div id="modelStatus" style="font-size:13px;margin-top:8px;color:#94a3b8"></div>
+  </div>`;
+
   document.getElementById('tab-config').innerHTML = html;
+  loadModels();
 }
 
 function toggleMask(key, val) {
@@ -428,7 +445,58 @@ async function saveApiKey(key) {
   if (!value) return alert('Masukkan API key!');
   await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key, value }) });
   document.getElementById('new-' + key).value = '';
+  // Auto-detect models after key change
   loadApiKeys();
+  if (key === 'GROQ_API_KEY') {
+    document.getElementById('modelStatus').textContent = '🔄 Mendeteksi model...';
+    setTimeout(refreshModels, 500);
+  }
+}
+
+async function loadModels() {
+  const sel = document.getElementById('modelSelect');
+  if (!sel) return;
+  const data = await api('/api/models');
+  sel.innerHTML = '';
+  if (data.models && data.models.length > 0) {
+    data.models.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.id + (m.owned ? ` (${m.owned})` : '');
+      if (m.id === data.current) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    document.getElementById('modelStatus').textContent = `${data.models.length} model tersedia`;
+  } else {
+    sel.innerHTML = '<option value="">Tidak ada model terdeteksi</option>';
+    document.getElementById('modelStatus').textContent = 'Set GROQ_API_KEY dulu, lalu klik Deteksi Model';
+  }
+}
+
+async function refreshModels() {
+  const status = document.getElementById('modelStatus');
+  status.textContent = '🔄 Mendeteksi model dari Groq API...';
+  const data = await api('/api/models/refresh', { method: 'POST' });
+  if (data.success && data.models && data.models.length > 0) {
+    const sel = document.getElementById('modelSelect');
+    sel.innerHTML = '';
+    data.models.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.id + (m.owned ? ` (${m.owned})` : '');
+      if (m.id === data.current) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    status.textContent = `✅ ${data.models.length} model terdeteksi! Pilih model default.`;
+  } else {
+    status.textContent = '❌ Gagal mendeteksi model. Cek API key.';
+  }
+}
+
+async function saveModel(modelId) {
+  if (!modelId) return;
+  await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'GROQ_MODEL', value: modelId }) });
+  document.getElementById('modelStatus').textContent = `✅ Model disimpan: ${modelId}`;
 }
 
 // ==================== INIT ====================

@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { getAllSkills, getSkill, setSkillEnabled, getSkillConfig, setSkillConfig, getAllSkillConfigs, getAllWhitelist, addWhitelist, removeWhitelist, getAllSettings, getSetting, setSetting } from '../services/db.js';
 import { getSkillNames } from '../skills/_loader.js';
+import { reloadAI, fetchAvailableModels, getGroqClient } from '../services/ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.WEB_PORT || '6789');
@@ -64,6 +65,15 @@ export function startServer() {
     if (!getSetting(PASSWORD_KEY)) {
         setSetting(PASSWORD_KEY, hashPassword(DEFAULT_PASSWORD));
         console.log('🔑 Dashboard password default: 12345678');
+    }
+
+    // Seed env vars to DB so web dashboard can see/manage them
+    const envToSeed = ['GROQ_API_KEY', 'GROQ_MODEL', 'TAVILY_API_KEY', 'OPENAI_API_KEY'];
+    for (const key of envToSeed) {
+        if (process.env[key] && !getSetting(key)) {
+            setSetting(key, process.env[key]);
+            console.log(`🌱 Seeded ${key} from env to DB`);
+        }
     }
 
     const app = express();
@@ -178,7 +188,35 @@ export function startServer() {
         const { key, value } = req.body;
         if (!key) return res.status(400).json({ error: 'key required' });
         setSetting(key, value);
+        // Reload AI service jika key/model berubah
+        const aiKeys = ['GROQ_API_KEY', 'GROQ_MODEL', 'TAVILY_API_KEY', 'OPENAI_API_KEY'];
+        if (aiKeys.includes(key)) {
+            reloadAI();
+            console.log(`🔄 AI reloaded after ${key} update`);
+        }
         res.json({ success: true, key, value });
+    });
+
+    // ==================== API: MODELS ====================
+    app.get('/api/models', async (req, res) => {
+        try {
+            const models = await fetchAvailableModels();
+            const current = getSetting('GROQ_MODEL') || process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+            res.json({ models, current });
+        } catch (err) {
+            res.json({ models: [], current: '', error: err.message });
+        }
+    });
+
+    app.post('/api/models/refresh', async (req, res) => {
+        try {
+            reloadAI();
+            const models = await fetchAvailableModels();
+            const current = getSetting('GROQ_MODEL') || process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+            res.json({ success: true, models, current });
+        } catch (err) {
+            res.json({ success: false, error: err.message });
+        }
     });
 
     // ==================== API: BOT COMMANDS ====================
