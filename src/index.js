@@ -6,7 +6,7 @@ import { handleMessage } from './handlers/message.js';
 import { initDatabase, getPendingReminders, markReminderDone, broadcastTargets, loadPendingBroadcasts, deletePendingBroadcast, pendingBroadcasts } from './services/db.js';
 import { log, error } from './utils/logger.js';
 import { loadSkills } from './skills/_loader.js';
-import { startServer, setSock, incrementMessageCount } from './server/index.js';
+import { startServer, setSock, incrementMessageCount, setBotStatus } from './server/index.js';
 
 const msgDedup = new Set();
 const DEDUP_WINDOW = 3000;
@@ -49,6 +49,7 @@ async function startBot() {
         }
 
         if (connection === 'close') {
+            setBotStatus(false);
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const isLoggedOut = statusCode === DisconnectReason.loggedOut;
             const isConflict = lastDisconnect?.error?.message?.includes('conflict') ||
@@ -82,6 +83,7 @@ async function startBot() {
             console.log('✅ WhatsApp connected!\n');
             reconnectAttempts = 0;
             setSock(sock);
+            setBotStatus(true);
 
             // Load all groups for broadcast
             try {
