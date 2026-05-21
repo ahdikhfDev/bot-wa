@@ -60,6 +60,15 @@ export function setSock(sock) {
     sockRef = sock;
 }
 
+// Known API keys for the dashboard
+const KNOWN_API_KEYS = [
+    { key: 'GROQ_API_KEY', label: 'Groq', provider: 'groq', docs: 'https://console.groq.com/keys' },
+    { key: 'OPENAI_API_KEY', label: 'OpenAI', provider: 'openai', docs: 'https://platform.openai.com/api-keys' },
+    { key: 'TAVILY_API_KEY', label: 'Tavily (Search)', provider: 'tavily', docs: 'https://app.tavily.com/home' },
+];
+
+const SENSITIVE_KEYS = ['GROQ_API_KEY', 'OPENAI_API_KEY', 'TAVILY_API_KEY', 'dashboard_token', 'dashboard_password'];
+
 export function startServer() {
     // Set default password on first run
     if (!getSetting(PASSWORD_KEY)) {
@@ -181,20 +190,106 @@ export function startServer() {
 
     // ==================== API: SETTINGS ====================
     app.get('/api/settings', (req, res) => {
-        res.json(getAllSettings());
+        const all = getAllSettings();
+        // Filter out sensitive keys from settings endpoint
+        const safe = {};
+        for (const [k, v] of Object.entries(all)) {
+            if (!SENSITIVE_KEYS.includes(k)) safe[k] = v;
+        }
+        res.json(safe);
     });
 
     app.put('/api/settings', (req, res) => {
         const { key, value } = req.body;
         if (!key) return res.status(400).json({ error: 'key required' });
+        if (SENSITIVE_KEYS.includes(key)) {
+            return res.status(403).json({ error: 'Gunakan endpoint /api/keys untuk mengubah API key' });
+        }
         setSetting(key, value);
-        // Reload AI service jika key/model berubah
-        const aiKeys = ['GROQ_API_KEY', 'GROQ_MODEL', 'TAVILY_API_KEY', 'OPENAI_API_KEY'];
+        res.json({ success: true, key, value });
+    });
+
+    // ==================== API: KEYS (Dedicated) ====================
+    app.get('/api/keys', (req, res) => {
+        const all = getAllSettings();
+        const result = KNOWN_API_KEYS.map(k => {
+            const val = all[k.key] || '';
+            const masked = val.length > 8
+                ? val.substring(0, 4) + '*'.repeat(8) + val.substring(val.length - 4)
+                : val ? '*'.repeat(8) : '';
+            return {
+                key: k.key,
+                label: k.label,
+                provider: k.provider,
+                docs: k.docs,
+                masked,
+                isSet: !!val,
+            };
+        });
+        res.json(result);
+    });
+
+    app.put('/api/keys', (req, res) => {
+        const { key, value } = req.body;
+        if (!key) return res.status(400).json({ error: 'key required' });
+        const known = KNOWN_API_KEYS.find(k => k.key === key);
+        if (!known) return res.status(400).json({ error: 'Unknown API key' });
+        if (value && value.length < 8) return res.status(400).json({ error: 'API key terlalu pendek' });
+        setSetting(key, value || '');
+        const aiKeys = ['GROQ_API_KEY', 'OPENAI_API_KEY', 'TAVILY_API_KEY'];
         if (aiKeys.includes(key)) {
             reloadAI();
-            console.log(`🔄 AI reloaded after ${key} update`);
         }
-        res.json({ success: true, key, value });
+        res.json({ success: true, key, provider: known.provider });
+    });
+
+    app.post('/api/keys/test', async (req, res) => {
+        const { key } = req.body;
+        if (!key) return res.status(400).json({ error: 'key required' });
+        const apiKey = getSetting(key) || process.env[key] || '';
+        if (!apiKey) return res.json({ success: false, error: 'API key belum diset' });
+
+        try {
+            if (key === 'GROQ_API_KEY') {
+                const resp = await fetch('https://api.groq.com/openai/v1/models', {
+                    headers: { 'Authorization': `Bearer ${apiKey}` }
+                });
+                if (!resp.ok) return res.json({ success: false, error: `Groq: ${resp.status} ${resp.statusText}` });
+                const data = await resp.json();
+                const count = (data.data || []).filter(m => m.active).length;
+                return res.json({ success: true, message: `✅ Groq: ${count} model aktif tersedia` });
+            }
+            if (key === 'OPENAI_API_KEY') {
+                const resp = await fetch('https://api.openai.com/v1/models', {
+                    headers: { 'Authorization': `Bearer ${apiKey}` }
+                });
+                if (!resp.ok) return res.json({ success: false, error: `OpenAI: ${resp.status} ${resp.statusText}` });
+                return res.json({ success: true, message: '✅ OpenAI API key valid' });
+            }
+            if (key === 'TAVILY_API_KEY') {
+                const resp = await fetch('https://api.tavily.com', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey, query: 'test', max_results: 1 })
+                });
+                if (!resp.ok) return res.json({ success: false, error: `Tavily: ${resp.status} ${resp.statusText}` });
+                return res.json({ success: true, message: '✅ Tavily API key valid' });
+            }
+            res.json({ success: false, error: 'Unknown provider' });
+        } catch (err) {
+            res.json({ success: false, error: err.message });
+        }
+    });
+
+    // ==================== API: BOT ====================
+    app.post('/api/bot/reconnect', async (req, res) => {
+        if (!sockRef) return res.status(503).json({ error: 'Bot not connected' });
+        try {
+            await sockRef.logout();
+            res.json({ success: true, message: '🔄 Bot logout, akan reconnect otomatis...' });
+        } catch (err) {
+            res.json({ success: false, error: err.message });
+        }
     });
 
     // ==================== API: MODELS ====================

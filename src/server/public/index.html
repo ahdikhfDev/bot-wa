@@ -3,168 +3,461 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bot-WA Dashboard</title>
+<title>Bot-WA · Dashboard</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
-header { background: linear-gradient(135deg, #1e293b, #334155); padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #475569; }
-header h1 { font-size: 20px; font-weight: 700; }
-header h1 span { color: #22d3ee; }
-.badge { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
-.badge-green { background: #065f46; color: #6ee7b7; }
-.badge-red { background: #7f1d1d; color: #fca5a5; }
-.badge-yellow { background: #713f12; color: #fcd34d; }
-.container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 24px; }
-.card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
-.card h3 { font-size: 13px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
-.card .value { font-size: 28px; font-weight: 700; }
-.card .sub { font-size: 12px; color: #64748b; margin-top: 4px; }
-.tabs { display: flex; gap: 4px; margin-bottom: 20px; background: #1e293b; border-radius: 10px; padding: 4px; border: 1px solid #334155; }
-.tab { padding: 8px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; color: #94a3b8; border: none; background: none; transition: all 0.2s; }
-.tab:hover { color: #e2e8f0; }
-.tab.active { background: #334155; color: #22d3ee; }
-.tab-content { display: none; }
-.tab-content.active { display: block; }
+:root {
+  --bg: #0b1120;
+  --surface: #131b2e;
+  --surface-2: #1a2540;
+  --surface-3: #243056;
+  --border: #1e2d4a;
+  --border-light: #2d4068;
+  --text: #e8edf5;
+  --text-2: #a0b3d9;
+  --text-3: #5e7399;
+  --accent: #22d3ee;
+  --accent-2: #06b6d4;
+  --green: #10b981;
+  --green-bg: #064e3b;
+  --red: #ef4444;
+  --red-bg: #7f1d1d;
+  --yellow: #f59e0b;
+  --yellow-bg: #713f12;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-lg: 14px;
+  --shadow: 0 1px 3px rgba(0,0,0,.3), 0 1px 2px rgba(0,0,0,.2);
+  --shadow-lg: 0 10px 30px rgba(0,0,0,.5);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --mono: 'SF Mono', 'Fira Code', monospace;
+  --sidebar: 240px;
+  --header-h: 56px;
+  --transition: .2s ease;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 14px; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+  line-height: 1.5;
+}
+
+/* ============ LAYOUT ============ */
+.app { display: flex; min-height: 100vh; }
+
+/* Sidebar */
+.sidebar {
+  position: fixed; top: 0; left: 0; bottom: 0; width: var(--sidebar);
+  background: var(--surface); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; z-index: 100; overflow-y: auto;
+  transition: transform var(--transition);
+}
+.sidebar-logo {
+  padding: 16px 20px; font-size: 18px; font-weight: 700;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px;
+}
+.sidebar-logo .logo-icon {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; font-weight: 800; color: #0b1120;
+}
+.sidebar-logo span { color: var(--accent); }
+.sidebar-nav { flex: 1; padding: 8px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-radius: var(--radius);
+  color: var(--text-2); cursor: pointer; transition: all var(--transition);
+  font-size: 13px; font-weight: 500; border: none; background: none; width: 100%;
+  text-align: left;
+}
+.nav-item:hover { background: var(--surface-2); color: var(--text); }
+.nav-item.active { background: var(--surface-3); color: var(--accent); }
+.nav-item .icon { font-size: 16px; width: 24px; text-align: center; }
+.sidebar-footer {
+  padding: 12px; border-top: 1px solid var(--border);
+}
+.sidebar-footer .nav-item { font-size: 12px; padding: 8px 14px; }
+
+/* Main */
+.main {
+  margin-left: var(--sidebar); flex: 1; display: flex; flex-direction: column;
+  min-height: 100vh;
+}
+.header {
+  height: var(--header-h); background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px; position: sticky; top: 0; z-index: 50;
+}
+.header-left { display: flex; align-items: center; gap: 16px; }
+.header-left .menu-btn { display: none; background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; padding: 4px; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.content { padding: 24px; flex: 1; max-width: 1200px; width: 100%; margin: 0 auto; }
+
+/* Status badges */
+.badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
+}
+.badge-dot { width: 7px; height: 7px; border-radius: 50%; }
+.badge-green { background: var(--green-bg); color: var(--green); }
+.badge-green .badge-dot { background: var(--green); }
+.badge-red { background: var(--red-bg); color: var(--red); }
+.badge-red .badge-dot { background: var(--red); }
+.badge-yellow { background: var(--yellow-bg); color: var(--yellow); }
+.badge-yellow .badge-dot { background: var(--yellow); }
+
+/* ============ STATS GRID ============ */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.stat-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 18px 20px; transition: border-color var(--transition);
+}
+.stat-card:hover { border-color: var(--border-light); }
+.stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-3); font-weight: 600; }
+.stat-value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+.stat-sub { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+
+/* ============ SECTION CONTAINER ============ */
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px; flex-wrap: wrap; gap: 8px;
+}
+.section-title { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.section-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ============ CARDS ============ */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; }
+
+/* ============ TABLES ============ */
+.table-wrap { overflow-x: auto; border-radius: var(--radius-lg); border: 1px solid var(--border); }
 table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 12px 8px; border-bottom: 1px solid #1e293b; font-size: 14px; }
-th { color: #94a3b8; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-tr:hover td { background: #1e293b; }
-input, select { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; padding: 8px 12px; border-radius: 8px; font-size: 14px; width: 100%; }
-input:focus { outline: none; border-color: #22d3ee; }
-.btn { padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; }
-.btn-primary { background: #0284c7; color: white; }
-.btn-primary:hover { background: #0369a1; }
-.btn-danger { background: #dc2626; color: white; }
-.btn-danger:hover { background: #b91c1c; }
+th, td { padding: 10px 14px; text-align: left; font-size: 13px; border-bottom: 1px solid var(--border); }
+th { background: var(--surface-2); color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; font-weight: 600; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--surface-2); }
+
+/* ============ FORMS ============ */
+input, select, textarea {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 8px 12px; border-radius: var(--radius-sm); font-size: 13px; font-family: var(--font);
+  width: 100%; transition: border-color var(--transition);
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+textarea { resize: vertical; font-family: var(--mono); font-size: 12px; }
+label { font-size: 12px; color: var(--text-2); font-weight: 500; display: block; margin-bottom: 4px; }
+.form-group { margin-bottom: 14px; }
+.form-row { display: flex; gap: 12px; }
+.form-row > * { flex: 1; }
+
+/* ============ BUTTONS ============ */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 16px; border-radius: var(--radius-sm); border: none; cursor: pointer;
+  font-size: 13px; font-weight: 600; transition: all var(--transition);
+  text-decoration: none; line-height: 1.4;
+}
+.btn-primary { background: var(--accent-2); color: #0b1120; }
+.btn-primary:hover { background: var(--accent); }
+.btn-ghost { background: transparent; color: var(--text-2); border: 1px solid var(--border); }
+.btn-ghost:hover { background: var(--surface-2); color: var(--text); }
+.btn-danger { background: var(--red); color: white; }
+.btn-danger:hover { opacity: .85; }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
-.toggle { position: relative; width: 44px; height: 24px; cursor: pointer; }
+.btn-xs { padding: 2px 8px; font-size: 11px; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-icon { padding: 6px; width: 32px; height: 32px; justify-content: center; }
+
+/* ============ TOGGLE ============ */
+.toggle { position: relative; width: 40px; height: 22px; display: inline-block; cursor: pointer; }
 .toggle input { display: none; }
-.toggle .slider { position: absolute; inset: 0; background: #475569; border-radius: 12px; transition: 0.3s; }
-.toggle .slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.3s; }
-.toggle input:checked+.slider { background: #22d3ee; }
-.toggle input:checked+.slider::before { transform: translateX(20px); }
+.toggle .slider {
+  position: absolute; inset: 0; background: var(--border); border-radius: 11px;
+  transition: var(--transition);
+}
+.toggle .slider::before {
+  content: ''; position: absolute; width: 16px; height: 16px; left: 3px; bottom: 3px;
+  background: var(--text); border-radius: 50%; transition: var(--transition);
+}
+.toggle input:checked + .slider { background: var(--accent-2); }
+.toggle input:checked + .slider::before { transform: translateX(18px); }
+
+/* ============ LOADING ============ */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface) 25%, var(--surface-2) 50%, var(--surface) 75%);
+  background-size: 200% 100%; animation: skel 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes skel { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.skel-row { height: 14px; margin-bottom: 10px; width: 100%; }
+.skel-row:last-child { width: 60%; }
+.skel-card { height: 80px; }
+.skel-table { height: 200px; }
+
+/* ============ TOAST ============ */
+.toast-container {
+  position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+  display: flex; flex-direction: column; gap: 8px; max-width: 360px;
+}
+.toast {
+  padding: 12px 16px; border-radius: var(--radius); background: var(--surface);
+  border: 1px solid var(--border); box-shadow: var(--shadow-lg);
+  display: flex; align-items: flex-start; gap: 10px;
+  animation: slideIn .3s ease; font-size: 13px; line-height: 1.4;
+}
+.toast-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+.toast-body { flex: 1; }
+.toast-close { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 16px; padding: 0 4px; }
+.toast-success { border-left: 3px solid var(--green); }
+.toast-error { border-left: 3px solid var(--red); }
+.toast-info { border-left: 3px solid var(--accent); }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ============ MODAL ============ */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  animation: fadeIn .15s ease;
+}
+.modal {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 24px; max-width: 520px; width: 90vw; max-height: 85vh; overflow-y: auto;
+  box-shadow: var(--shadow-lg); animation: scaleIn .2s ease;
+}
+.modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.modal-title { font-size: 16px; font-weight: 700; }
+.modal-close { background: none; border: none; color: var(--text-3); font-size: 20px; cursor: pointer; padding: 4px; line-height: 1; }
+.modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes scaleIn { from { transform: scale(.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* ============ EMPTY STATE ============ */
+.empty-state { padding: 48px 24px; text-align: center; color: var(--text-3); }
+.empty-state .empty-icon { font-size: 40px; margin-bottom: 12px; }
+.empty-state p { font-size: 13px; }
+
+/* ============ KEY VALUE DISPLAY ============ */
+.kv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (max-width: 600px) { .kv-grid { grid-template-columns: 1fr; } }
+
+/* ============ RESPONSIVE ============ */
+@media (max-width: 768px) {
+  .sidebar { transform: translateX(-100%); }
+  .sidebar.open { transform: translateX(0); }
+  .main { margin-left: 0; }
+  .header-left .menu-btn { display: flex; }
+  .content { padding: 16px; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .form-row { flex-direction: column; }
+}
+
+/* ============ MISC ============ */
 .flex { display: flex; }
-.flex-between { justify-content: space-between; align-items: center; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
 .gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
 .gap-4 { gap: 16px; }
-.mt-4 { margin-top: 16px; }
+.mb-2 { margin-bottom: 8px; }
+.mb-3 { margin-bottom: 12px; }
 .mb-4 { margin-bottom: 16px; }
+.mt-2 { margin-top: 8px; }
+.mt-4 { margin-top: 16px; }
+.text-muted { color: var(--text-2); }
+.text-subtle { color: var(--text-3); }
+.text-accent { color: var(--accent); }
+.text-green { color: var(--green); }
+.text-red { color: var(--red); }
+.text-sm { font-size: 12px; }
+.text-xs { font-size: 11px; }
 .text-center { text-align: center; }
-.text-muted { color: #64748b; }
-.text-green { color: #6ee7b7; }
-.text-red { color: #fca5a5; }
-.text-cyan { color: #22d3ee; }
-.logo { width: 32px; height: 32px; background: linear-gradient(135deg, #22d3ee, #0284c7); border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; margin-right: 10px; }
-.empty { padding: 40px; text-align: center; color: #64748b; }
-.config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; }
-@media (max-width: 768px) { .config-grid { grid-template-columns: 1fr; } }
+.font-mono { font-family: var(--mono); }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-full { width: 100%; }
+.tag {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; background: var(--surface-2); color: var(--text-2);
+  margin: 2px;
+}
+
+/* ============ SPECIFIC ============ */
+.api-key-display {
+  font-family: var(--mono); font-size: 13px;
+  padding: 6px 10px; background: var(--bg); border-radius: var(--radius-sm);
+  display: flex; align-items: center; gap: 8px; width: 100%;
+}
+.persona-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.persona-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; transition: border-color var(--transition);
+}
+.persona-card:hover { border-color: var(--border-light); }
+.persona-name { font-weight: 600; color: var(--accent); margin-bottom: 4px; font-size: 14px; }
+.persona-preview { font-size: 12px; color: var(--text-3); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 </style>
 </head>
 <body>
-<header>
-  <div style="display:flex;align-items:center">
-    <div class="logo">B</div>
-    <h1><span>Bot-WA</span> Dashboard</h1>
-  </div>
-  <div style="display:flex;align-items:center;gap:12px">
-    <span id="statusBadge" class="badge badge-yellow">Loading...</span>
-    <span style="font-size:13px;color:#94a3b8" id="uptimeDisplay"></span>
-    <button class="btn btn-sm" style="background:#334155;color:#94a3b8" onclick="showChangePw()">🔑 Ganti Password</button>
-  </div>
-</header>
+<div class="app" id="app">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">B</div>
+      <div><span>Bot</span>-WA</div>
+    </div>
+    <nav class="sidebar-nav" id="nav">
+      <button class="nav-item active" data-tab="overview"><span class="icon">📊</span> Overview</button>
+      <button class="nav-item" data-tab="keys"><span class="icon">🔑</span> API Keys</button>
+      <button class="nav-item" data-tab="model"><span class="icon">🧠</span> Model</button>
+      <button class="nav-item" data-tab="skills"><span class="icon">🧩</span> Skills</button>
+      <button class="nav-item" data-tab="whitelist"><span class="icon">👤</span> Whitelist</button>
+      <button class="nav-item" data-tab="persona"><span class="icon">🎭</span> Persona</button>
+      <button class="nav-item" data-tab="profiles"><span class="icon">📋</span> Profiles</button>
+      <button class="nav-item" data-tab="settings"><span class="icon">⚙️</span> Settings</button>
+    </nav>
+    <div class="sidebar-footer">
+      <button class="nav-item" id="btnReconnect"><span class="icon">🔄</span> Reconnect Bot</button>
+      <button class="nav-item" onclick="showChangePw()"><span class="icon">🔒</span> Change Password</button>
+    </div>
+  </aside>
 
-<div class="container">
-  <div class="grid" id="statsGrid"></div>
+  <!-- Main -->
+  <div class="main">
+    <header class="header">
+      <div class="header-left">
+        <button class="menu-btn" id="menuBtn">☰</button>
+        <span class="badge" id="statusBadge"><span class="badge-dot"></span> Loading...</span>
+      </div>
+      <div class="header-right">
+        <span class="text-subtle text-sm" id="uptimeDisplay"></span>
+        <span class="text-subtle text-sm" id="versionDisplay"></span>
+      </div>
+    </header>
 
-  <div class="tabs" id="tabs">
-    <button class="tab active" data-tab="skills">Skills</button>
-    <button class="tab" data-tab="whitelist">Whitelist</button>
-    <button class="tab" data-tab="settings">Settings</button>
-    <button class="tab" data-tab="config">API Keys</button>
-    <button class="tab" data-tab="persona">Persona</button>
-    <button class="tab" data-tab="profiles">Profiles</button>
+    <div class="content" id="content">
+      <div id="statsGrid" class="stats-grid"></div>
+      <div id="tabContent"></div>
+    </div>
   </div>
-
-  <div id="tab-skills" class="tab-content active"></div>
-  <div id="tab-whitelist" class="tab-content"></div>
-  <div id="tab-settings" class="tab-content"></div>
-  <div id="tab-config" class="tab-content"></div>
-  <div id="tab-persona" class="tab-content"></div>
-  <div id="tab-profiles" class="tab-content"></div>
 </div>
 
-<div id="loginOverlay" style="position:fixed;inset:0;background:#0f172a;display:flex;align-items:center;justify-content:center;z-index:999">
-  <div class="card" style="min-width:340px;max-width:380px;text-align:center">
-    <div class="logo" style="width:48px;height:48px;font-size:24px;margin:0 auto 16px">B</div>
-    <h2 style="font-size:18px;margin-bottom:4px"><span style="color:#22d3ee">Bot-WA</span> Dashboard</h2>
-    <p class="text-muted" style="font-size:13px;margin-bottom:20px">Masukkan password untuk mengakses</p>
-    <input id="loginPassword" type="password" placeholder="Password" style="margin-bottom:12px" onkeydown="if(event.key==='Enter') doLogin()">
-    <div id="loginError" style="color:#fca5a5;font-size:13px;margin-bottom:12px;display:none"></div>
-    <button class="btn btn-primary" style="width:100%;padding:10px" onclick="doLogin()">Login</button>
+<!-- Toast Container -->
+<div class="toast-container" id="toasts"></div>
+
+<!-- Modal Container -->
+<div id="modalRoot"></div>
+
+<!-- Login Overlay -->
+<div id="loginOverlay" style="position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:2000;flex-direction:column;gap:20px">
+  <div style="text-align:center">
+    <div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:#0b1120;margin:0 auto 16px">B</div>
+    <h2 style="font-size:20px;font-weight:700"><span style="color:var(--accent)">Bot-WA</span> Dashboard</h2>
+    <p style="color:var(--text-3);font-size:13px;margin-top:4px">Masuk untuk mengelola bot</p>
+  </div>
+  <div class="card" style="min-width:320px;max-width:360px;width:90vw">
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="loginPassword" placeholder="Masukkan password dashboard" onkeydown="if(event.key==='Enter') doLogin()">
+    </div>
+    <div id="loginError" style="color:var(--red);font-size:13px;margin-bottom:12px;display:none"></div>
+    <button class="btn btn-primary w-full" id="loginBtn" onclick="doLogin()">Masuk</button>
   </div>
 </div>
 
-<div id="changePwOverlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:none;align-items:center;justify-content:center;z-index:100">
-  <div class="card" style="min-width:340px;max-width:380px">
-    <h3 style="font-size:16px;margin-bottom:16px">🔑 Ganti Password</h3>
-    <div style="margin-bottom:12px"><input id="cp-old" type="password" placeholder="Password saat ini"></div>
-    <div style="margin-bottom:12px"><input id="cp-new" type="password" placeholder="Password baru (min 4 karakter)"></div>
-    <div style="margin-bottom:12px"><input id="cp-confirm" type="password" placeholder="Konfirmasi password baru" onkeydown="if(event.key==='Enter') doChangePassword()"></div>
-    <div id="cpError" style="color:#fca5a5;font-size:13px;margin-bottom:12px;display:none"></div>
-    <div class="flex gap-4">
-      <button class="btn btn-primary" onclick="doChangePassword()">Simpan</button>
-      <button class="btn btn-danger" onclick="closeChangePw()">Batal</button>
+<!-- Change Password Modal (hidden by default via JS) -->
+<div id="changePwModal" style="display:none">
+  <div class="modal-overlay">
+    <div class="modal">
+      <div class="modal-header"><div class="modal-title">🔒 Ganti Password</div><button class="modal-close" onclick="closeChangePw()">✕</button></div>
+      <div class="form-group"><label>Password saat ini</label><input type="password" id="cp-old" placeholder="Password lama"></div>
+      <div class="form-group"><label>Password baru</label><input type="password" id="cp-new" placeholder="Minimal 4 karakter"></div>
+      <div class="form-group"><label>Konfirmasi password baru</label><input type="password" id="cp-confirm" placeholder="Ulangi password baru" onkeydown="if(event.key==='Enter') doChangePassword()"></div>
+      <div id="cpError" style="color:var(--red);font-size:13px;margin-bottom:12px;display:none"></div>
+      <div class="modal-footer"><button class="btn btn-primary" onclick="doChangePassword()">Simpan</button><button class="btn btn-ghost" onclick="closeChangePw()">Batal</button></div>
     </div>
   </div>
 </div>
 
 <script>
+// ==================== CONFIG ====================
 const API = '';
 let authToken = localStorage.getItem('bot_wa_token') || '';
+let _env = {};
+let _models = [];
 
-function setToken(t) {
-  authToken = t;
-  if (t) localStorage.setItem('bot_wa_token', t);
-  else localStorage.removeItem('bot_wa_token');
-}
-
+// ==================== API HELPER ====================
 async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
   const r = await fetch(API + path, { headers, ...opts });
-  if (r.status === 401) {
-    setToken('');
-    showLogin();
-    return { error: 'Unauthorized' };
-  }
+  if (r.status === 401) { setToken(''); showLogin(); return null; }
   return r.json();
 }
 
+function setToken(t) { authToken = t; t ? localStorage.setItem('bot_wa_token', t) : localStorage.removeItem('bot_wa_token'); }
+
+// ==================== TOAST SYSTEM ====================
+function toast(msg, type = 'info', duration = 4000) {
+  const icons = { success: '✅', error: '❌', info: 'ℹ️', warning: '⚠️' };
+  const container = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ️'}</span><div class="toast-body">${msg}</div><button class="toast-close" onclick="this.parentElement.remove()">✕</button>`;
+  container.appendChild(el);
+  setTimeout(() => { if (el.parentElement) el.remove(); }, duration);
+}
+
+// ==================== MODAL SYSTEM ====================
+function showModal(html) {
+  const root = document.getElementById('modalRoot');
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = html;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  root.appendChild(overlay);
+  return overlay;
+}
+
+// ==================== TEMPLATES ====================
+function loadingSkeleton(type = 'table') {
+  if (type === 'table') return '<div class="table-wrap"><div style="padding:20px"><div class="skeleton skel-table"></div></div></div>';
+  if (type === 'card') return '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">'+Array(4).fill('<div class="skeleton skel-card" style="border-radius:10px"></div>').join('')+'</div>';
+  return '<div class="skeleton" style="height:120px;border-radius:10px"></div>';
+}
+
+function emptyState(icon, text) {
+  return `<div class="empty-state"><div class="empty-icon">${icon}</div><p>${text}</p></div>`;
+}
+
+// ==================== AUTH ====================
 function showLogin() {
   document.getElementById('loginPassword').value = '';
   document.getElementById('loginError').style.display = 'none';
   document.getElementById('loginOverlay').style.display = 'flex';
-  document.getElementById('loginPassword').focus();
+  setTimeout(() => document.getElementById('loginPassword').focus(), 100);
 }
 
 function doLogin() {
   const pw = document.getElementById('loginPassword').value;
   if (!pw) return;
+  const btn = document.getElementById('loginBtn'); btn.disabled = true; btn.textContent = 'Memproses...';
   fetch(API + '/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password: pw })
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw })
   }).then(r => r.json()).then(d => {
     if (d.success) {
-      setToken(d.token);
-      document.getElementById('loginOverlay').style.display = 'none';
+      setToken(d.token); document.getElementById('loginOverlay').style.display = 'none';
       init();
     } else {
       document.getElementById('loginError').textContent = d.error || 'Password salah';
       document.getElementById('loginError').style.display = 'block';
     }
-  });
+  }).catch(() => { document.getElementById('loginError').textContent = 'Gagal terhubung ke server'; document.getElementById('loginError').style.display = 'block'; })
+  .finally(() => { btn.disabled = false; btn.textContent = 'Masuk'; });
 }
 
 function showChangePw() {
@@ -172,500 +465,590 @@ function showChangePw() {
   document.getElementById('cp-new').value = '';
   document.getElementById('cp-confirm').value = '';
   document.getElementById('cpError').style.display = 'none';
-  document.getElementById('changePwOverlay').style.display = 'flex';
+  document.getElementById('changePwModal').style.display = 'block';
 }
 
-function closeChangePw() {
-  document.getElementById('changePwOverlay').style.display = 'none';
-}
+function closeChangePw() { document.getElementById('changePwModal').style.display = 'none'; }
 
 function doChangePassword() {
   const oldPw = document.getElementById('cp-old').value;
   const newPw = document.getElementById('cp-new').value;
   const confirmPw = document.getElementById('cp-confirm').value;
-  if (!oldPw || !newPw) {
-    document.getElementById('cpError').textContent = 'Isi semua field';
-    return document.getElementById('cpError').style.display = 'block';
-  }
-  if (newPw !== confirmPw) {
-    document.getElementById('cpError').textContent = 'Password baru tidak cocok';
-    return document.getElementById('cpError').style.display = 'block';
-  }
-  if (newPw.length < 4) {
-    document.getElementById('cpError').textContent = 'Password minimal 4 karakter';
-    return document.getElementById('cpError').style.display = 'block';
-  }
-  fetch(API + '/api/auth/change-password', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
-    body: JSON.stringify({ oldPassword: oldPw, newPassword: newPw })
-  }).then(r => r.json()).then(d => {
-    if (d.success) {
-      setToken(d.token);
-      closeChangePw();
-      alert('Password berhasil diganti!');
-    } else {
-      document.getElementById('cpError').textContent = d.error || 'Gagal';
-      document.getElementById('cpError').style.display = 'block';
-    }
+  if (!oldPw || !newPw) { showCpError('Isi semua field'); return; }
+  if (newPw !== confirmPw) { showCpError('Password baru tidak cocok'); return; }
+  if (newPw.length < 4) { showCpError('Password minimal 4 karakter'); return; }
+  api('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ oldPassword: oldPw, newPassword: newPw }) }).then(d => {
+    if (d && d.success) { setToken(d.token); closeChangePw(); toast('Password berhasil diganti!', 'success'); }
+    else { showCpError(d?.error || 'Gagal'); }
   });
 }
+function showCpError(msg) { const el = document.getElementById('cpError'); el.textContent = msg; el.style.display = 'block'; }
 
-// ==================== TABS ====================
-document.getElementById('tabs').addEventListener('click', e => {
-  const tab = e.target.closest('.tab');
-  if (!tab) return;
-  document.querySelectorAll('.tab, .tab-content').forEach(el => el.classList.remove('active'));
-  tab.classList.add('active');
-  document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+// ==================== NAVIGATION ====================
+let _currentTab = 'overview';
+
+function navigate(tab) {
+  _currentTab = tab;
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
+  // Close sidebar on mobile
+  document.getElementById('sidebar').classList.remove('open');
+  renderTab(tab);
+}
+
+document.getElementById('nav').addEventListener('click', e => {
+  const item = e.target.closest('.nav-item');
+  if (item && item.dataset.tab) navigate(item.dataset.tab);
 });
 
-// ==================== STATUS ====================
-async function loadStatus() {
-  const s = await api('/api/status');
-  const badge = document.getElementById('statusBadge');
-  if (s.connected) {
-    badge.className = 'badge badge-green';
-    badge.textContent = 'Connected';
-  } else {
-    badge.className = 'badge badge-red';
-    badge.textContent = 'Disconnected';
-  }
-  const uptime = s.uptime || 0;
-  const h = Math.floor(uptime / 3600);
-  const m = Math.floor((uptime % 3600) / 60);
-  document.getElementById('uptimeDisplay').textContent = h + 'h ' + m + 'm';
+document.getElementById('menuBtn').addEventListener('click', () => {
+  document.getElementById('sidebar').classList.toggle('open');
+});
 
-  const tokens = await api('/api/tokens');
-  const fmt = n => n >= 1000000 ? (n/1000000).toFixed(1)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : n;
+// ==================== TAB RENDERER ====================
+async function renderTab(tab) {
+  const el = document.getElementById('tabContent');
+  el.innerHTML = loadingSkeleton();
+  try {
+    switch (tab) {
+      case 'overview': await renderOverview(); break;
+      case 'keys': await renderApiKeys(); break;
+      case 'model': await renderModel(); break;
+      case 'skills': await renderSkills(); break;
+      case 'whitelist': await renderWhitelist(); break;
+      case 'persona': await renderPersona(); break;
+      case 'profiles': await renderProfiles(); break;
+      case 'settings': await renderSettings(); break;
+    }
+  } catch (e) {
+    el.innerHTML = emptyState('⚠️', 'Error loading tab: ' + e.message);
+  }
+}
+
+// ==================== OVERVIEW TAB ====================
+async function renderOverview() {
+  const [status, tokens] = await Promise.all([api('/api/status'), api('/api/tokens')]);
+  if (!status) return;
+  const fmt = n => n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : n;
+  const h = Math.floor((status.uptime||0) / 3600);
+  const m = Math.floor(((status.uptime||0) % 3600) / 60);
   document.getElementById('statsGrid').innerHTML = `
-    <div class="card"><h3>Status Bot</h3><div class="value ${s.connected ? 'text-green' : 'text-red'}">${s.connected ? '● Aktif' : '○ Mati'}</div><div class="sub">WhatsApp connection</div></div>
-    <div class="card"><h3>Skills Aktif</h3><div class="value text-cyan">${s.skillsCount || 0}</div><div class="sub">Total skill terinstall</div></div>
-    <div class="card"><h3>Whitelist</h3><div class="value">${s.whitelistCount || 0}</div><div class="sub">User yang diizinkan</div></div>
-    <div class="card"><h3>Uptime</h3><div class="value">${h}<span style="font-size:14px">j</span> ${m}<span style="font-size:14px">m</span></div><div class="sub">Bot berjalan</div></div>
-    <div class="card"><h3>Token Usage</h3><div class="value text-cyan">${fmt(tokens.totalAll || 0)}</div><div class="sub">${tokens.count || 0} calls | P:${fmt(tokens.totalPrompt||0)} C:${fmt(tokens.totalCompletion||0)}</div></div>
-  `;
+    <div class="stat-card"><div class="stat-label">Status Bot</div>
+      <div class="stat-value ${status.connected ? 'text-green' : 'text-red'}">${status.connected ? '● Aktif' : '○ Mati'}</div>
+      <div class="stat-sub">${status.connected ? 'WhatsApp terhubung' : 'Tidak terhubung'}</div></div>
+    <div class="stat-card"><div class="stat-label">Uptime</div>
+      <div class="stat-value">${h}<span style="font-size:14px">j</span> ${m}<span style="font-size:14px">m</span></div>
+      <div class="stat-sub">Bot berjalan</div></div>
+    <div class="stat-card"><div class="stat-label">Pesan Diproses</div>
+      <div class="stat-value text-accent">${fmt(status.messageCount||0)}</div>
+      <div class="stat-sub">Sejak start</div></div>
+    <div class="stat-card"><div class="stat-label">Skills Aktif</div>
+      <div class="stat-value text-accent">${status.skillsCount||0}</div>
+      <div class="stat-sub">Terinstall</div></div>
+    <div class="stat-card"><div class="stat-label">Whitelist</div>
+      <div class="stat-value">${status.whitelistCount||0}</div>
+      <div class="stat-sub">User diizinkan</div></div>
+    <div class="stat-card"><div class="stat-label">Token Usage</div>
+      <div class="stat-value text-accent">${fmt(tokens?.totalAll||0)}</div>
+      <div class="stat-sub">${tokens?.count||0} calls</div></div>`;
+
+  document.getElementById('tabContent').innerHTML = ''; // Overview is just stats
 }
 
-// ==================== SKILLS ====================
-async function loadSkills() {
-  const skills = await api('/api/skills');
-  if (!skills.length) {
-    document.getElementById('tab-skills').innerHTML = '<div class="empty">Belum ada skill terdaftar</div>';
-    return;
-  }
-  let html = `<table><thead><tr><th>Skill</th><th>Commands</th><th>Status</th><th>Owner Only</th><th>Group Only</th><th>Aksi</th></tr></thead><tbody>`;
-  for (const s of skills) {
-    html += `<tr>
-      <td><strong>${s.title || s.name}</strong><br><span class="text-muted" style="font-size:12px">${s.description || ''}</span></td>
-      <td>${(s.commands || []).map(c => '<code style="background:#0f172a;padding:2px 6px;border-radius:4px;font-size:12px">/'+c+'</code>').join(' ')}</td>
-      <td><label class="toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''} data-name="${s.name}" onchange="toggleSkill(this)"><span class="slider"></span></label></td>
-      <td>${s.owner_only ? '👑' : '-'}</td>
-      <td>${s.group_only ? '👥' : '-'}</td>
-      <td>${s.has_config ? '<button class="btn btn-sm btn-primary" onclick="showSkillConfig(\''+s.name+'\')">Config</button>' : '-'}</td>
-    </tr>`;
-  }
-  html += '</tbody></table>';
-  document.getElementById('tab-skills').innerHTML = html;
-}
+// ==================== API KEYS TAB ====================
+async function renderApiKeys() {
+  const keys = await api('/api/keys');
+  if (!keys || !keys.length) { document.getElementById('tabContent').innerHTML = emptyState('🔑', 'Tidak ada API key'); return; }
 
-async function toggleSkill(el) {
-  await api('/api/skills/' + el.dataset.name + '/toggle', {
-    method: 'PUT',
-    body: JSON.stringify({ enabled: el.checked })
-  });
-}
+  let html = `<div class="section-header"><div class="section-title">🔑 API Keys</div></div>
+  <div style="display:grid;gap:12px">`;
 
-async function showSkillConfig(name) {
-  const cfg = await api('/api/skills/' + name + '/config');
-  const keys = Object.keys(cfg);
-  if (!keys.length) {
-    alert('Tidak ada konfigurasi untuk skill ini.');
-    return;
-  }
-  const html = keys.map(k => `
-    <div class="config-grid">
-      <span style="font-size:13px;font-weight:500">${k}</span>
-      <div style="display:flex;gap:4px">
-        <input type="text" id="cfg-${name}-${k}" value="${cfg[k] || ''}" placeholder="${k}">
-        <button class="btn btn-sm btn-primary" onclick="saveConfig('${name}','${k}')">Save</button>
-      </div>
-    </div>
-  `).join('');
-  const div = document.createElement('div');
-  div.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100';
-  div.innerHTML = `<div class="card" style="min-width:400px;max-width:500px">
-    <div class="flex flex-between mb-4"><h3 style="font-size:16px">⚙️ ${name} Config</h3><button class="btn btn-sm btn-danger" onclick="this.closest('div[style]').remove()">✕</button></div>
-    ${html}
-  </div>`;
-  document.body.appendChild(div);
-}
-
-async function saveConfig(name, key) {
-  const value = document.getElementById('cfg-' + name + '-' + key).value;
-  await api('/api/skills/' + name + '/config', {
-    method: 'PUT',
-    body: JSON.stringify({ key, value })
-  });
-  alert('Config saved!');
-}
-
-// ==================== WHITELIST ====================
-async function loadWhitelist() {
-  const list = await api('/api/whitelist');
-  let html = `<div class="flex flex-between mb-4">
-    <h3 style="font-size:16px">👤 User yang Diizinkan</h3>
-    <button class="btn btn-primary" onclick="showAddWhitelist()">+ Tambah</button>
-  </div>`;
-  if (!list.length) {
-    html += '<div class="empty">Belum ada user di whitelist</div>';
-  } else {
-    html += `<table><thead><tr><th>#</th><th>Nama</th><th>JID</th><th>Ditambahkan</th><th>Aksi</th></tr></thead><tbody>`;
-    list.forEach((item, i) => {
-      html += `<tr>
-        <td>${i + 1}</td>
-        <td>${item.name || '-'}</td>
-        <td style="font-size:12px;font-family:monospace">${item.jid}</td>
-        <td style="font-size:12px">${item.addedAt || '-'}</td>
-        <td><button class="btn btn-sm btn-danger" onclick="removeWhitelist('${item.jid}')">Hapus</button></td>
-      </tr>`;
-    });
-    html += '</tbody></table>';
-  }
-  document.getElementById('tab-whitelist').innerHTML = html;
-}
-
-async function showAddWhitelist() {
-  const div = document.createElement('div');
-  div.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100';
-  div.innerHTML = `<div class="card" style="min-width:350px">
-    <h3 style="font-size:16px;margin-bottom:16px">Tambah Whitelist</h3>
-    <div style="margin-bottom:12px"><input id="wl-jid" placeholder="628xxx@s.whatsapp.net atau 628xxx"></div>
-    <div style="margin-bottom:16px"><input id="wl-name" placeholder="Nama (opsional)"></div>
-    <div class="flex gap-4">
-      <button class="btn btn-primary" onclick="addWhitelist()">Tambah</button>
-      <button class="btn btn-danger" onclick="this.closest('div[style]').remove()">Batal</button>
-    </div>
-  </div>`;
-  document.body.appendChild(div);
-}
-
-async function addWhitelist() {
-  let jid = document.getElementById('wl-jid').value.trim();
-  const name = document.getElementById('wl-name').value.trim();
-  if (!jid) return alert('Masukkan nomor!');
-  if (!jid.includes('@')) jid = jid + '@s.whatsapp.net';
-  await api('/api/whitelist', { method: 'POST', body: JSON.stringify({ jid, name }) });
-  document.querySelector('div[style]').remove();
-  loadWhitelist();
-}
-
-async function removeWhitelist(jid) {
-  if (!confirm('Hapus ' + jid + ' dari whitelist?')) return;
-  await api('/api/whitelist/' + encodeURIComponent(jid), { method: 'DELETE' });
-  loadWhitelist();
-}
-
-// ==================== SETTINGS ====================
-async function loadSettings() {
-  const settings = await api('/api/settings');
-  let html = `<h3 style="font-size:16px;margin-bottom:16px">⚙️ Pengaturan Bot</h3>
-  <table><thead><tr><th>Key</th><th>Value</th><th>Aksi</th></tr></thead><tbody>`;
-  const keys = Object.keys(settings);
-  if (!keys.length) {
-    html += '<tr><td colspan="3" class="empty">Belum ada pengaturan</td></tr>';
-  }
   for (const k of keys) {
-    html += `<tr>
-      <td style="font-weight:500">${k}</td>
-      <td><input type="text" id="set-${k}" value="${settings[k] || ''}" style="max-width:300px"></td>
-      <td><button class="btn btn-sm btn-primary" onclick="saveSetting('${k}')">Save</button></td>
-    </tr>`;
+    const id = 'key-' + k.key;
+    html += `<div class="card" id="${id}">
+      <div class="flex items-center justify-between mb-2">
+        <div><strong>${k.label}</strong><br><span class="text-subtle text-xs">${k.key}</span></div>
+        <div class="flex gap-2">
+          <button class="btn btn-sm btn-ghost" onclick="testKey('${k.key}')" id="test-${k.key}">Test</button>
+          <a href="${k.docs}" target="_blank" class="btn btn-sm btn-ghost" style="text-decoration:none">📄</a>
+        </div>
+      </div>
+      <div class="api-key-display mb-2">
+        <span id="val-${k.key}" style="flex:1">${k.isSet ? k.masked : '<span class="text-subtle">Belum diset</span>'}</span>
+        ${k.isSet ? `<button class="btn btn-xs btn-ghost" onclick="toggleKeyVisibility('${k.key}')">👁</button>` : ''}
+      </div>
+      <div class="form-row">
+        <input type="password" id="input-${k.key}" placeholder="API key baru..." value="">
+        <button class="btn btn-primary btn-sm" onclick="saveKey('${k.key}')">Simpan</button>
+      </div>
+      <div id="status-${k.key}" class="text-xs mt-2" style="color:var(--text-3)"></div>
+    </div>`;
   }
-  html += '</tbody></table>';
-  document.getElementById('tab-settings').innerHTML = html;
+
+  html += `</div>`;
+  document.getElementById('tabContent').innerHTML = html;
 }
 
-async function saveSetting(key) {
-  const value = document.getElementById('set-' + key).value;
-  await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key, value }) });
-  loadSettings();
+async function saveKey(key) {
+  const val = document.getElementById('input-' + key).value.trim();
+  if (!val) { toast('Masukkan API key', 'warning'); return; }
+  const btn = document.querySelector(`#key-${key} .btn-primary`);
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  const res = await api('/api/keys', { method: 'PUT', body: JSON.stringify({ key, value: val }) });
+  btn.disabled = false; btn.textContent = 'Simpan';
+  if (res && res.success) {
+    toast(`${res.provider} API key tersimpan!`, 'success');
+    renderApiKeys();
+  } else {
+    toast(res?.error || 'Gagal menyimpan', 'error');
+  }
 }
 
-// ==================== API KEYS & MODELS ====================
-async function loadApiKeys() {
-  const settings = await api('/api/settings');
-  const apiKeys = Object.keys(settings).filter(k => k.toLowerCase().includes('api') || k.toLowerCase().includes('key') || k === 'GROQ_API_KEY' || k === 'TAVILY_API_KEY' || k === 'OPENAI_API_KEY');
-  let html = `<h3 style="font-size:16px;margin-bottom:8px">🔑 API Keys</h3>
-  <p class="text-muted" style="font-size:13px;margin-bottom:16px">Set API key, nanti model会自动 terdeteksi</p>
-  <table><thead><tr><th>Service</th><th>API Key</th><th>Aksi</th></tr></thead><tbody>`;
-  if (!apiKeys.length) {
-    html += '<tr><td colspan="3" class="empty">Belum ada API key</td></tr>';
+async function testKey(key) {
+  const btn = document.getElementById('test-' + key);
+  const status = document.getElementById('status-' + key);
+  btn.disabled = true; btn.textContent = 'Testing...'; status.textContent = '⏳ Mengecek...';
+  const res = await api('/api/keys/test', { method: 'POST', body: JSON.stringify({ key }) });
+  btn.disabled = false; btn.textContent = 'Test';
+  if (res && res.success) {
+    status.textContent = res.message;
+    status.style.color = 'var(--green)';
+    toast(res.message, 'success');
+  } else {
+    status.textContent = '❌ ' + (res?.error || 'Gagal');
+    status.style.color = 'var(--red)';
+    toast(res?.error || 'Test gagal', 'error');
   }
-  for (const k of apiKeys) {
-    const val = settings[k] || '';
-    const masked = val.length > 8 ? val.substring(0, 4) + '••••' + val.substring(val.length - 4) : '••••••••';
-    html += `<tr>
-      <td style="font-weight:500">${k}</td>
-      <td style="font-family:monospace;font-size:13px">
-        <span id="apikey-${k}">${masked}</span>
-        <button class="btn btn-sm" style="background:#1e293b;color:#94a3b8" onclick="toggleMask('${k}','${val.replace(/'/g, "\\'")}')">👁</button>
-      </td>
-      <td><input type="text" id="new-${k}" placeholder="Ganti API key..." style="max-width:200px;display:inline-block">
-        <button class="btn btn-sm btn-primary" onclick="saveApiKey('${k}')">Save</button>
-      </td>
-    </tr>`;
-  }
-  html += '</tbody></table>';
+}
 
-  // Model section
-  html += `<div class="card" style="margin-top:20px">
-    <div class="flex flex-between">
-      <div><h3 style="font-size:16px">🧠 Model AI</h3>
-      <p class="text-muted" style="font-size:13px">Pilih model untuk chat & AI</p></div>
-      <button class="btn btn-sm btn-primary" onclick="refreshModels()">🔄 Deteksi Model</button>
-    </div>
-    <div style="margin-top:12px">
-      <select id="modelSelect" style="max-width:400px" onchange="saveModel(this.value)">
-        <option value="">Loading models...</option>
+function toggleKeyVisibility(key) {
+  const el = document.getElementById('val-' + key);
+  if (!el.dataset.real) {
+    // Fetch actual key
+    api('/api/keys').then(keys => {
+      const k = keys.find(x => x.key === key);
+      if (!k || !k.isSet) return;
+      // We need the real key. Use settings endpoint.
+      api('/api/settings').then(all => {
+        const real = all[key];
+        if (real) {
+          el.dataset.real = real;
+          el.textContent = real;
+        }
+      });
+    });
+  } else {
+    // Hide again - we don't have the masked value handy
+    renderApiKeys();
+  }
+}
+
+// ==================== MODEL TAB ====================
+async function renderModel() {
+  let html = `<div class="section-header"><div class="section-title">🧠 Model AI</div>
+    <button class="btn btn-sm btn-ghost" onclick="refreshModels()">🔄 Refresh</button></div>`;
+
+  const data = await api('/api/models');
+  const current = data?.current || '';
+  const models = data?.models || [];
+
+  html += `<div class="card mb-4">
+    <div class="form-group">
+      <label>Default Model</label>
+      <select id="modelSelect" onchange="saveModel(this.value)">
+        <option value="">-- Pilih model --</option>
+        ${models.map(m => `<option value="${m.id}" ${m.id === current ? 'selected' : ''}>${m.id} ${m.owned ? '('+m.owned+')' : ''}</option>`).join('')}
       </select>
     </div>
-    <div id="modelStatus" style="font-size:13px;margin-top:8px;color:#94a3b8"></div>
+    <div class="text-xs text-subtle" id="modelStatus">${models.length} model tersedia</div>
   </div>`;
 
-  document.getElementById('tab-config').innerHTML = html;
-  loadModels();
-}
+  html += `<div class="card">
+    <div class="section-title" style="font-size:14px;margin-bottom:8px">📋 Fallback Models</div>
+    <div class="text-sm text-subtle mb-2">Model cadangan jika model utama kena rate limit</div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px">
+      ${models.slice(0,8).map(m => `<span class="tag">${m.id.split('-')[0]}</span>`).join('')}
+    </div>
+  </div>`;
 
-function toggleMask(key, val) {
-  const el = document.getElementById('apikey-' + key);
-  if (el.textContent.includes('••••')) {
-    el.textContent = val;
-  } else {
-    const masked = val.length > 8 ? val.substring(0, 4) + '••••' + val.substring(val.length - 4) : '••••••••';
-    el.textContent = masked;
-  }
-}
-
-async function saveApiKey(key) {
-  const value = document.getElementById('new-' + key).value.trim();
-  if (!value) return alert('Masukkan API key!');
-  await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key, value }) });
-  document.getElementById('new-' + key).value = '';
-  // Auto-detect models after key change
-  loadApiKeys();
-  if (key === 'GROQ_API_KEY') {
-    document.getElementById('modelStatus').textContent = '🔄 Mendeteksi model...';
-    setTimeout(refreshModels, 500);
-  }
-}
-
-async function loadModels() {
-  const sel = document.getElementById('modelSelect');
-  if (!sel) return;
-  const data = await api('/api/models');
-  sel.innerHTML = '';
-  if (data.models && data.models.length > 0) {
-    data.models.forEach(m => {
-      const opt = document.createElement('option');
-      opt.value = m.id;
-      opt.textContent = m.id + (m.owned ? ` (${m.owned})` : '');
-      if (m.id === data.current) opt.selected = true;
-      sel.appendChild(opt);
-    });
-    document.getElementById('modelStatus').textContent = `${data.models.length} model tersedia`;
-  } else {
-    sel.innerHTML = '<option value="">Tidak ada model terdeteksi</option>';
-    document.getElementById('modelStatus').textContent = 'Set GROQ_API_KEY dulu, lalu klik Deteksi Model';
-  }
+  document.getElementById('tabContent').innerHTML = html;
 }
 
 async function refreshModels() {
-  const status = document.getElementById('modelStatus');
-  status.textContent = '🔄 Mendeteksi model dari Groq API...';
+  document.getElementById('modelStatus').textContent = '⏳ Mendeteksi...';
   const data = await api('/api/models/refresh', { method: 'POST' });
-  if (data.success && data.models && data.models.length > 0) {
-    const sel = document.getElementById('modelSelect');
-    sel.innerHTML = '';
-    data.models.forEach(m => {
-      const opt = document.createElement('option');
-      opt.value = m.id;
-      opt.textContent = m.id + (m.owned ? ` (${m.owned})` : '');
-      if (m.id === data.current) opt.selected = true;
-      sel.appendChild(opt);
-    });
-    status.textContent = `✅ ${data.models.length} model terdeteksi! Pilih model default.`;
+  if (data && data.success) {
+    renderModel();
+    toast(`${data.models.length} model terdeteksi!`, 'success');
   } else {
-    status.textContent = '❌ Gagal mendeteksi model. Cek API key.';
+    document.getElementById('modelStatus').textContent = '❌ Gagal. Cek API key Groq.';
+    toast('Gagal mendeteksi model', 'error');
   }
 }
 
 async function saveModel(modelId) {
   if (!modelId) return;
   await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'GROQ_MODEL', value: modelId }) });
-  document.getElementById('modelStatus').textContent = `✅ Model disimpan: ${modelId}`;
+  toast(`Model disimpan: ${modelId}`, 'success');
 }
 
-// ==================== PERSONA (CUSTOM MODES) ====================
-async function loadPersona() {
+// ==================== SKILLS TAB ====================
+async function renderSkills() {
+  const skills = await api('/api/skills');
+  if (!skills || !skills.length) { document.getElementById('tabContent').innerHTML = emptyState('🧩', 'Belum ada skill'); return; }
+
+  let html = `<div class="section-header"><div class="section-title">🧩 Skills</div>
+    <div class="text-xs text-subtle">${skills.length} terinstall</div></div>
+  <div class="table-wrap"><table><thead><tr><th>Skill</th><th>Commands</th><th>Status</th><th>Aksi</th></tr></thead><tbody>`;
+
+  for (const s of skills) {
+    html += `<tr>
+      <td><strong>${s.title || s.name}</strong><br><span class="text-subtle text-xs">${s.description || ''}</span></td>
+      <td>${(s.commands || []).map(c => `<span class="tag">/${c}</span>`).join(' ') || '<span class="text-subtle">-</span>'}</td>
+      <td><label class="toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''} data-name="${s.name}" onchange="toggleSkill(this)"><span class="slider"></span></label></td>
+      <td>${s.has_config ? `<button class="btn btn-xs btn-ghost" onclick="showSkillConfig('${s.name}')">Config</button>` : '<span class="text-subtle">-</span>'}</td>
+    </tr>`;
+  }
+
+  html += `</tbody></table></div>`;
+  document.getElementById('tabContent').innerHTML = html;
+}
+
+async function toggleSkill(el) {
+  const name = el.dataset.name;
+  const r = await api('/api/skills/' + name + '/toggle', { method: 'PUT', body: JSON.stringify({ enabled: el.checked }) });
+  if (r?.success) toast(`${name}: ${r.enabled ? 'diaktifkan' : 'dinonaktifkan'}`, 'info');
+}
+
+async function showSkillConfig(name) {
+  const cfg = await api('/api/skills/' + name + '/config');
+  const keys = Object.keys(cfg || {});
+  if (!keys.length) { toast('Tidak ada konfigurasi', 'info'); return; }
+
+  let body = '';
+  for (const k of keys) {
+    body += `<div class="form-group">
+      <label>${k}</label>
+      <div class="form-row"><input type="text" id="cfg-${name}-${k}" value="${cfg[k] || ''}">
+      <button class="btn btn-sm btn-primary" onclick="saveSkillConfig('${name}','${k}')">Save</button></div>
+    </div>`;
+  }
+
+  const modal = showModal(`
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header"><div class="modal-title">⚙️ ${name} Config</div><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+      ${body}
+    </div>
+  `);
+}
+
+async function saveSkillConfig(name, key) {
+  const value = document.getElementById('cfg-' + name + '-' + key).value;
+  await api('/api/skills/' + name + '/config', { method: 'PUT', body: JSON.stringify({ key, value }) });
+  toast('Config saved!', 'success');
+}
+
+// ==================== WHITELIST TAB ====================
+async function renderWhitelist() {
+  const [list, settings] = await Promise.all([api('/api/whitelist'), api('/api/settings')]);
+  const isPrivate = settings?.PRIVATE_MODE === 'true' || settings?.PRIVATE_MODE === true;
+  const listArr = list || [];
+
+  let html = `<div class="section-header"><div class="section-title">👤 Whitelist</div>
+    <div class="section-actions">
+      <button class="btn btn-sm btn-ghost" onclick="showAddWhitelist()">+ Tambah</button>
+    </div></div>
+  <div class="text-xs text-subtle mb-3">${listArr.length} user diizinkan</div>`;
+
+  if (!listArr.length) {
+    html += emptyState('👤', 'Belum ada user di whitelist');
+  } else {
+    html += `<div class="table-wrap"><table><thead><tr><th>#</th><th>Nama</th><th>JID</th><th>Aksi</th></tr></thead><tbody>`;
+    listArr.forEach((item, i) => {
+      html += `<tr>
+        <td>${i + 1}</td>
+        <td>${item.name || '-'}</td>
+        <td style="font-family:var(--mono);font-size:12px">${item.jid}</td>
+        <td><button class="btn btn-xs btn-danger" onclick="removeWhitelist('${item.jid}')">Hapus</button></td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
+
+  document.getElementById('tabContent').innerHTML = html;
+}
+
+function showAddWhitelist() {
+  const modal = showModal(`
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header"><div class="modal-title">Tambah Whitelist</div><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+      <div class="form-group"><label>Nomor WhatsApp</label><input id="wl-jid" placeholder="628xxx atau 628xxx@s.whatsapp.net" onkeydown="if(event.key==='Enter') document.getElementById('wl-name').focus()"></div>
+      <div class="form-group"><label>Nama (opsional)</label><input id="wl-name" placeholder="Nama user" onkeydown="if(event.key==='Enter') doAddWhitelist()"></div>
+      <div class="modal-footer"><button class="btn btn-primary" onclick="doAddWhitelist()">Tambah</button><button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Batal</button></div>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('wl-jid').focus(), 100);
+}
+
+async function doAddWhitelist() {
+  let jid = document.getElementById('wl-jid').value.trim();
+  const name = document.getElementById('wl-name').value.trim();
+  if (!jid) { toast('Masukkan nomor!', 'warning'); return; }
+  if (!jid.includes('@')) jid = jid + '@s.whatsapp.net';
+  const r = await api('/api/whitelist', { method: 'POST', body: JSON.stringify({ jid, name }) });
+  if (r?.success) { document.querySelector('.modal-overlay')?.remove(); renderWhitelist(); toast('Ditambahkan!', 'success'); }
+}
+
+async function removeWhitelist(jid) {
+  const modal = showModal(`
+    <div class="modal" onclick="event.stopPropagation()" style="max-width:400px">
+      <div class="modal-header"><div class="modal-title">Hapus Whitelist</div></div>
+      <p class="text-sm mb-4">Yakin ingin menghapus <strong>${jid}</strong>?</p>
+      <div class="modal-footer"><button class="btn btn-danger" onclick="confirmRemoveWhitelist('${jid}')">Ya, Hapus</button><button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Batal</button></div>
+    </div>
+  `);
+}
+
+async function confirmRemoveWhitelist(jid) {
+  await api('/api/whitelist/' + encodeURIComponent(jid), { method: 'DELETE' });
+  document.querySelector('.modal-overlay')?.remove();
+  renderWhitelist();
+  toast('Dihapus!', 'info');
+}
+
+// ==================== PERSONA TAB ====================
+async function renderPersona() {
   const data = await api('/api/modes/custom');
-  let html = `<h3 style="font-size:16px;margin-bottom:4px">🧠 Mode / Persona</h3>
-  <p class="text-muted" style="font-size:13px;margin-bottom:16px">Mode default (bawaan) + mode kustom yang bisa diedit bebas</p>`;
+  const defaults = data?.defaults || [];
+  const custom = data?.custom || [];
+
+  let html = `<div class="section-header"><div class="section-title">🎭 Persona / Mode</div>
+    <button class="btn btn-sm btn-ghost" onclick="showAddPersona()">+ Buat Baru</button></div>`;
 
   // Default modes
-  html += `<div class="card" style="margin-bottom:16px">
-    <h4 style="font-size:14px;margin-bottom:8px">📌 Mode Default</h4>
-    <div style="display:flex;flex-wrap:wrap;gap:8px">`;
-  for (const d of data.defaults) {
-    html += `<span class="badge" style="background:#1e293b;color:#94a3b8;padding:6px 14px;border:1px solid #334155">${d.name}</span>`;
-  }
-  html += `</div></div>`;
-
-  // Custom modes
-  html += `<div class="flex flex-between mb-4">
-    <h4 style="font-size:14px">⚡ Mode Kustom</h4>
-    <button class="btn btn-primary" onclick="showAddPersona()">+ Buat Baru</button>
+  html += `<div class="card mb-4">
+    <div class="flex items-center justify-between mb-3">
+      <h4 style="font-size:14px;font-weight:600">📌 Mode Default</h4>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">
+      ${defaults.map(d => `<span class="tag" style="padding:4px 12px">${d.name}</span>`).join('')}
+    </div>
   </div>`;
 
-  if (!data.custom.length) {
-    html += '<div class="empty">Belum ada mode kustom. Klik "Buat Baru" untuk membuat persona sendiri.</div>';
-  } else {
-    html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">`;
-    for (const m of data.custom) {
-      const preview = (m.system_prompt || '').substring(0, 120) + '...';
-      html += `<div class="card">
-        <div class="flex flex-between" style="margin-bottom:8px">
-          <strong style="color:#22d3ee">${m.name}</strong>
+  // Custom modes
+  if (custom.length) {
+    html += `<div class="persona-grid">`;
+    for (const m of custom) {
+      const preview = (m.system_prompt || '').substring(0, 150);
+      html += `<div class="persona-card">
+        <div class="flex items-center justify-between mb-2">
+          <div class="persona-name">${m.name}</div>
           <div class="flex gap-2">
-            <button class="btn btn-sm btn-primary" onclick="editPersona('${m.name}')">Edit</button>
-            <button class="btn btn-sm btn-danger" onclick="deletePersona('${m.name}')">Hapus</button>
+            <button class="btn btn-xs btn-ghost" onclick="editPersona('${m.name}')">Edit</button>
+            <button class="btn btn-xs btn-danger" onclick="deletePersona('${m.name}')">Hapus</button>
           </div>
         </div>
-        <div style="font-size:12px;color:#94a3b8;margin-bottom:4px">Temperature: ${m.temperature}</div>
-        <div style="font-size:12px;color:#64748b;line-height:1.4">${preview}</div>
+        <div class="text-xs text-subtle mb-2">Temperature: ${m.temperature}</div>
+        <div class="persona-preview">${preview}${preview.length >= 150 ? '...' : ''}</div>
       </div>`;
     }
     html += `</div>`;
+  } else {
+    html += emptyState('🎭', 'Belum ada mode kustom. Klik "Buat Baru" untuk membuat persona sendiri.');
   }
-  document.getElementById('tab-persona').innerHTML = html;
+
+  document.getElementById('tabContent').innerHTML = html;
 }
 
 function showAddPersona() {
-  const div = document.createElement('div');
-  div.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100';
-  div.innerHTML = personFormHtml('', 'Buat Persona Baru', 'createPersona(this)');
-  document.body.appendChild(div);
+  const modal = showModal(personaFormHtml('', 'Buat Persona Baru'));
 }
 
 function editPersona(name) {
   api('/api/modes/custom/' + name).then(m => {
-    const div = document.createElement('div');
-    div.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100';
-    div.innerHTML = personFormHtml(m.name, 'Edit: ' + m.name, 'updatePersona(this, "' + m.name + '")', m.system_prompt, m.temperature);
-    document.body.appendChild(div);
+    if (!m) return;
+    showModal(personaFormHtml(m.name, 'Edit: ' + m.name, m.system_prompt, m.temperature));
   });
 }
 
-function personFormHtml(name, title, onsubmit, prompt, temp) {
-  return `<div class="card" style="min-width:500px;max-width:600px;max-height:90vh;overflow-y:auto">
-    <div class="flex flex-between mb-4"><h3 style="font-size:16px">${title}</h3>
-      <button class="btn btn-sm btn-danger" onclick="this.closest('div[style]').remove()">✕</button></div>
-    ${name ? '' : '<div style="margin-bottom:12px"><input id="pf-name" placeholder="Nama mode (contoh: galak, imut, santai)" value="' + (name || '') + '"></div>'}
-    <div style="margin-bottom:12px">
-      <label style="font-size:13px;color:#94a3b8;display:block;margin-bottom:4px">System Prompt (instruksi untuk AI)</label>
-      <textarea id="pf-prompt" rows="8" style="width:100%;background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:8px 12px;border-radius:8px;font-size:13px;font-family:monospace;resize:vertical">${prompt || ''}</textarea>
+function personaFormHtml(name, title, prompt, temp) {
+  return `<div class="modal" onclick="event.stopPropagation()" style="max-width:600px">
+    <div class="modal-header"><div class="modal-title">${title}</div>
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+    ${name ? '' : '<div class="form-group"><label>Nama mode</label><input id="pf-name" placeholder="contoh: galak, imut, santai"></div>'}
+    <div class="form-group"><label>System Prompt</label>
+      <textarea id="pf-prompt" rows="8" placeholder="Instruksi untuk AI...">${prompt || ''}</textarea></div>
+    <div class="form-group">
+      <label>Temperature (0.1 = kaku, 1.0 = kreatif) <span id="pf-temp-val">${temp || 0.85}</span></label>
+      <input type="range" id="pf-temp" min="0.1" max="1.0" step="0.05" value="${temp || 0.85}"
+        oninput="document.getElementById('pf-temp-val').textContent=this.value">
     </div>
-    <div style="margin-bottom:16px">
-      <label style="font-size:13px;color:#94a3b8;display:block;margin-bottom:4px">Temperature (0.1 = kaku, 1.0 = kreatif) <span id="pf-temp-val">${temp || 0.85}</span></label>
-      <input type="range" id="pf-temp" min="0.1" max="1.0" step="0.05" value="${temp || 0.85}" style="width:100%" oninput="document.getElementById('pf-temp-val').textContent=this.value">
+    <div id="pf-error" class="text-sm" style="color:var(--red);margin-bottom:8px;display:none"></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="${name ? `updatePersona('${name}')` : 'createPersona()'}">Simpan</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Batal</button>
     </div>
-    <button class="btn btn-primary" onclick="${onsubmit}" style="width:100%;padding:10px">Simpan</button>
-    <div id="pf-error" style="color:#fca5a5;font-size:13px;margin-top:8px;display:none"></div>
   </div>`;
 }
 
-async function createPersona(btn) {
+async function createPersona() {
   const name = document.getElementById('pf-name').value.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
   const prompt = document.getElementById('pf-prompt').value.trim();
   const temp = document.getElementById('pf-temp').value;
   if (!name || !prompt) { showPfError('Isi nama dan prompt'); return; }
-  const r = await api('/api/modes/custom', {
-    method: 'POST', body: JSON.stringify({ name, system_prompt: prompt, temperature: temp })
-  });
-  if (r.error) { showPfError(r.error); return; }
-  btn.closest('div[style]').remove();
-  loadPersona();
+  const r = await api('/api/modes/custom', { method: 'POST', body: JSON.stringify({ name, system_prompt: prompt, temperature: temp }) });
+  if (r?.error) { showPfError(r.error); return; }
+  document.querySelector('.modal-overlay')?.remove();
+  renderPersona();
+  toast('Persona "' + name + '" dibuat!', 'success');
 }
 
-async function updatePersona(btn, name) {
+async function updatePersona(name) {
   const prompt = document.getElementById('pf-prompt').value.trim();
   const temp = document.getElementById('pf-temp').value;
   if (!prompt) { showPfError('Isi prompt'); return; }
-  await api('/api/modes/custom/' + name, {
-    method: 'PUT', body: JSON.stringify({ system_prompt: prompt, temperature: temp })
-  });
-  btn.closest('div[style]').remove();
-  loadPersona();
+  await api('/api/modes/custom/' + name, { method: 'PUT', body: JSON.stringify({ system_prompt: prompt, temperature: temp }) });
+  document.querySelector('.modal-overlay')?.remove();
+  renderPersona();
+  toast('Persona "' + name + '" diperbarui!', 'success');
 }
 
-function showPfError(msg) {
-  const el = document.getElementById('pf-error');
-  el.textContent = msg; el.style.display = 'block';
-}
+function showPfError(msg) { const el = document.getElementById('pf-error'); el.textContent = msg; el.style.display = 'block'; }
 
 async function deletePersona(name) {
-  if (!confirm('Hapus mode "' + name + '"?')) return;
-  await api('/api/modes/custom/' + name, { method: 'DELETE' });
-  loadPersona();
+  const modal = showModal(`
+    <div class="modal" onclick="event.stopPropagation()" style="max-width:400px">
+      <div class="modal-header"><div class="modal-title">Hapus Persona</div></div>
+      <p class="text-sm mb-4">Yakin ingin menghapus mode <strong>"${name}"</strong>?</p>
+      <div class="modal-footer"><button class="btn btn-danger" onclick="confirmDeletePersona('${name}')">Ya, Hapus</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Batal</button></div>
+    </div>
+  `);
 }
 
-// ==================== PROFILES ====================
-async function loadProfiles() {
+async function confirmDeletePersona(name) {
+  await api('/api/modes/custom/' + name, { method: 'DELETE' });
+  document.querySelector('.modal-overlay')?.remove();
+  renderPersona();
+  toast('Persona "' + name + '" dihapus!', 'info');
+}
+
+// ==================== PROFILES TAB ====================
+async function renderProfiles() {
   const profiles = await api('/api/profiles');
-  let html = `<h3 style="font-size:16px;margin-bottom:16px">📋 Profil User</h3>
-  <p class="text-muted" style="font-size:13px;margin-bottom:16px">Fakta-fakta yang diingat bot tentang setiap user (diekstrak otomatis dari percakapan)</p>`;
-  if (!profiles.length) {
-    html += '<div class="empty">Belum ada profil user. Ajak bot ngobrol dulu!</div>';
+  const arr = profiles || [];
+
+  let html = `<div class="section-header"><div class="section-title">📋 Profil User</div>
+    <div class="text-xs text-subtle">${arr.length} user</div></div>
+  <p class="text-sm text-subtle mb-4">Fakta yang diingat bot tentang setiap user (diekstrak otomatis dari percakapan)</p>`;
+
+  if (!arr.length) {
+    html += emptyState('📋', 'Belum ada profil. Ajak bot ngobrol dulu!');
   } else {
-    html += `<table><thead><tr><th>User</th><th>Fakta</th><th>Timezone</th><th>Terakhir Update</th></tr></thead><tbody>`;
-    for (const p of profiles) {
-      const facts = (p.facts || []).map(f => `<span style="background:#0f172a;padding:2px 8px;border-radius:12px;font-size:12px;margin:2px;display:inline-block">${f}</span>`).join('');
-      const name = p.name || p.jid.split('@')[0];
+    html += `<div class="table-wrap"><table><thead><tr><th>User</th><th>Fakta</th><th>Timezone</th><th>Update</th></tr></thead><tbody>`;
+    for (const p of arr) {
+      const facts = (p.facts || []).map(f => `<span class="tag">${f}</span>`).join('') || '<span class="text-subtle">-</span>';
+      const name = p.name || p.jid?.split('@')[0] || '?';
       html += `<tr>
-        <td><strong>${name}</strong><br><span style="font-size:11px;color:#64748b;font-family:monospace">${p.jid}</span></td>
-        <td style="max-width:400px">${facts || '<span class="text-muted">-</span>'}</td>
+        <td><strong>${name}</strong><br><span class="text-xs text-subtle font-mono">${p.jid || ''}</span></td>
+        <td style="max-width:300px">${facts}</td>
         <td>${p.timezone || 'Asia/Jakarta'}</td>
-        <td style="font-size:12px">${p.updated_at || '-'}</td>
+        <td class="text-xs text-subtle">${p.updated_at ? new Date(p.updated_at).toLocaleDateString('id-ID') : '-'}</td>
       </tr>`;
     }
-    html += '</tbody></table>';
+    html += `</tbody></table></div>`;
   }
-  document.getElementById('tab-profiles').innerHTML = html;
+
+  document.getElementById('tabContent').innerHTML = html;
 }
+
+// ==================== SETTINGS TAB ====================
+async function renderSettings() {
+  const settings = await api('/api/settings');
+  const keys = Object.keys(settings || {});
+  if (!keys.length) { document.getElementById('tabContent').innerHTML = emptyState('⚙️', 'Belum ada pengaturan'); return; }
+
+  let html = `<div class="section-header"><div class="section-title">⚙️ Pengaturan</div>
+    <div class="text-xs text-subtle">${keys.length} item</div></div>
+  <div class="table-wrap"><table><thead><tr><th>Key</th><th>Value</th><th>Aksi</th></tr></thead><tbody>`;
+
+  for (const k of keys) {
+    const isBool = settings[k] === 'true' || settings[k] === 'false';
+    html += `<tr>
+      <td style="font-weight:500;font-family:var(--mono);font-size:12px">${k}</td>
+      <td>${isBool
+        ? `<label class="toggle"><input type="checkbox" ${settings[k] === 'true' ? 'checked' : ''} onchange="saveSetting('${k}', this.checked)"><span class="slider"></span></label>`
+        : `<input type="text" id="set-${k}" value="${settings[k] || ''}" style="max-width:300px" onkeydown="if(event.key==='Enter') saveSetting('${k}')">`
+      }</td>
+      <td>${isBool ? '' : `<button class="btn btn-xs btn-primary" onclick="saveSetting('${k}')">Save</button>`}</td>
+    </tr>`;
+  }
+
+  html += `</tbody></table></div>`;
+  document.getElementById('tabContent').innerHTML = html;
+}
+
+async function saveSetting(key, val) {
+  const value = val !== undefined ? (val ? 'true' : 'false') : document.getElementById('set-' + key).value;
+  await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key, value }) });
+  toast(`Pengaturan "${key}" disimpan!`, 'success');
+}
+
+// ==================== TOP STATUS BAR ====================
+async function updateStatusBar() {
+  const s = await api('/api/status');
+  if (!s) return;
+  const badge = document.getElementById('statusBadge');
+  if (s.connected) {
+    badge.className = 'badge badge-green';
+    badge.innerHTML = '<span class="badge-dot"></span> Connected';
+  } else {
+    badge.className = 'badge badge-red';
+    badge.innerHTML = '<span class="badge-dot"></span> Disconnected';
+  }
+  const h = Math.floor((s.uptime || 0) / 3600);
+  const m = Math.floor(((s.uptime || 0) % 3600) / 60);
+  document.getElementById('uptimeDisplay').textContent = h + 'h ' + m + 'm';
+}
+
+// ==================== RECONNECT ====================
+document.getElementById('btnReconnect').addEventListener('click', async () => {
+  const btn = document.getElementById('btnReconnect');
+  btn.disabled = true; btn.innerHTML = '<span class="icon">⏳</span> Reconnecting...';
+  const r = await api('/api/bot/reconnect', { method: 'POST' });
+  btn.disabled = false; btn.innerHTML = '<span class="icon">🔄</span> Reconnect Bot';
+  if (r?.success) toast('Bot akan reconnect...', 'info');
+  else toast(r?.error || 'Gagal reconnect', 'error');
+});
+
+// ==================== KEYBOARD SHORTCUTS ====================
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && !isNaN(e.key) && e.key >= '1' && e.key <= '8') {
+    const items = document.querySelectorAll('.nav-item[data-tab]');
+    const idx = parseInt(e.key) - 1;
+    if (items[idx]) navigate(items[idx].dataset.tab);
+  }
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.modal-overlay').forEach(el => el.remove());
+    closeChangePw();
+    document.getElementById('sidebar').classList.remove('open');
+  }
+});
 
 // ==================== INIT ====================
 async function init() {
   document.getElementById('loginOverlay').style.display = 'none';
-  await loadStatus();
-  await loadSkills();
-  await loadWhitelist();
-  await loadSettings();
-  await loadApiKeys();
-  await loadPersona();
-  await loadProfiles();
-  setInterval(loadStatus, 10000);
+  await updateStatusBar();
+  await renderOverview();
+  setInterval(updateStatusBar, 10000);
 }
 
-// Check auth on load
+// Auth check on load
 (async function() {
   if (authToken) {
-    const v = await fetch('/api/auth/verify', {
+    const v = await fetch(API + '/api/auth/verify', {
       headers: { 'Authorization': 'Bearer ' + authToken }
-    }).then(r => r.json());
-    if (v.authenticated) {
-      init();
-      return;
-    }
+    }).then(r => r.json()).catch(() => ({}));
+    if (v.authenticated) { init(); return; }
   }
   showLogin();
 })();
