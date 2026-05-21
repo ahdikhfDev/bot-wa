@@ -390,22 +390,36 @@ ${promptRules}`;
                     }
                 }
 
-                // Jika error adalah Rate Limit, lanjut ke model berikutnya
+                // Auth error (API key invalid/missing) -> langsung lempar
+                if (error?.status === 401 || error?.status === 403 || error?.message?.includes('auth') || error?.message?.includes('API key')) {
+                    throw error;
+                }
+                // Rate limit -> coba model berikutnya
                 if (error?.status === 429 || error?.message?.includes('Rate limit') || error?.message?.includes('429') || error?.code === 'tool_use_failed') {
                     console.warn(`⚠️ Model ${currentModel} error (${error.code || error.status}), oper ke cadangan...`);
                     continue; 
                 }
                 
-                // Jika error lain, lemparkan keluar
+                // Error lain -> lempar
                 throw error;
             }
         }
         
         // Jika semua model dalam list gagal/limit
-        return 'Maaf bos, semua "otak" AI lagi sibuk atau kena limit. Istirahat bentar ya!';
+        const keyCheck = getSetting('GROQ_API_KEY') || process.env.GROQ_API_KEY || '';
+        if (keyCheck.startsWith('gsk_') && keyCheck.length < 20) {
+            return '⚠️ *GROQ_API_KEY tidak valid!*\n\nAPI key yang diset tampaknya salah. Set API key yang benar lewat Web Dashboard → tab API Keys.';
+        }
+        return 'Maaf bos, semua "otak" AI lagi sibuk atau kena limit. Coba lagi nanti ya!';
         
     } catch (error) {
         console.error('❌ Groq API Error Full Trace:', error);
+        if (error?.status === 401 || error?.status === 403 || error?.message?.includes('auth') || error?.message?.includes('API key')) {
+            return '⚠️ *GROQ_API_KEY tidak valid!*\n\nSet API key yang benar lewat Web Dashboard:\nhttp://<ip-stb>:6789 → tab API Keys';
+        }
+        if (error?.message?.includes('tidak dikonfigurasi')) {
+            return '⚠️ *GROQ_API_KEY belum diset!*\n\nSet dulu lewat Web Dashboard:\nhttp://<ip-stb>:6789 → tab API Keys';
+        }
         return 'Maaf, ada error internal saat mikir jawaban. Coba lagi ya.';
     }
 }
