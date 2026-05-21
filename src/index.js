@@ -3,7 +3,7 @@ import { makeWASocket, useMultiFileAuthState, DisconnectReason } from 'baileys';
 import P from 'pino';
 import QRCode from 'qrcode-terminal';
 import { handleMessage } from './handlers/message.js';
-import { initDatabase, getPendingReminders, markReminderDone, broadcastTargets, loadPendingBroadcasts, deletePendingBroadcast } from './services/db.js';
+import { initDatabase, getPendingReminders, markReminderDone, broadcastTargets, loadPendingBroadcasts, deletePendingBroadcast, pendingBroadcasts } from './services/db.js';
 import { log, error } from './utils/logger.js';
 import { loadSkills } from './skills/_loader.js';
 import { startServer, setSock, incrementMessageCount } from './server/index.js';

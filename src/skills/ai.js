@@ -1,5 +1,6 @@
 import { callAI, chatWithContext, getVoiceBuffer, extractAndStoreMemories } from '../services/ai.js';
-import { getMode, getGroupHistory, addContextMessage, incrementInteractionCount, getInteractionCount, getLearningInterval, resetInteractionCount } from '../services/db.js';
+import { getMode, getGroupHistory, addContextMessage, incrementInteractionCount, getInteractionCount, resetInteractionCount } from '../services/db.js';
+import { getLearningInterval } from '../services/ai.js';
 
 export default {
     name: 'ai',
