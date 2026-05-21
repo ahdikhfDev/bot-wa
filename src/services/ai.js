@@ -6,7 +6,9 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import os from 'os';
 import { PassThrough } from 'stream';
-import { addReminder, getMemories, searchMemoriesRAG, searchMemories, addMemory, getSetting, setSetting, recordTokenUsage, getAllCustomModes } from './db.js';
+import { addReminder, getMemories, searchMemoriesRAG, searchMemories, addMemory, getSetting, setSetting, recordTokenUsage, getAllCustomModes, getGroupHistory } from './db.js';
+import { buildContext, summarizeConversationAsync } from './contextBuilder.js';
+import { extractFactsAsync } from './userProfile.js';
 
 // Use system ffmpeg on Linux (STB) for better compatibility, static on Windows
 const actualFfmpegPath = os.platform() === 'win32' ? ffmpegPath : 'ffmpeg';
@@ -239,7 +241,7 @@ function _trySaveReminder(prompt, chatId) {
     return { h, m, msg };
 }
 
-export async function callAI(prompt, history = [], mode = 'asik', chatId = null) {
+export async function callAI(prompt, history = [], mode = 'asik', chatId = null, contextBlock = '') {
     try {
         const modeKey = mode.toLowerCase();
         const allModes = getModes();
@@ -247,22 +249,6 @@ export async function callAI(prompt, history = [], mode = 'asik', chatId = null)
         const temperature = (getModeTemperatures())[modeKey] ?? 1.0;
         const now = new Date();
         const currentTime = now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
-
-        // Always inject relevant memories from RAG
-        let memoriesBlock = '';
-        if (chatId) {
-            try {
-                const ragMemories = searchMemoriesRAG(chatId, prompt, 4);
-                if (ragMemories.length > 0) {
-                    memoriesBlock = '\n\nYang kamu ingat dari masa lalu:\n';
-                    memoriesBlock += ragMemories.map((m, i) =>
-                        `${i + 1}. ${m.content}`
-                    ).join('\n');
-                }
-            } catch (memErr) {
-                console.warn('⚠️ RAG memory search error:', memErr.message);
-            }
-        }
 
         const promptRules = `ATURAN GLOBAL (berlaku di SEMUA mode, tidak bisa di-override mode):
 - Kalau ditanya "kamu AI apa", "pakai model apa", "kamu Llama/GPT/dll":
@@ -279,7 +265,7 @@ export async function callAI(prompt, history = [], mode = 'asik', chatId = null)
 - JANGAN ulang saran/kalimat yang sama persis dalam satu percakapan. Kalau user bahas topik yang udah pernah dibahas, kasih sudut pandang BARU.
 - JANGAN pakai LaTeX/math notation ($, \frac, \sqrt, dll). WhatsApp gak render itu. Tulis matematika pake teks biasa: "3/4", "akar 2", "5 2/7".
 
-${memoriesBlock ? `Gunakan memori di atas sebagai konteks latarbelakang user. Jangan kaku — integrasikan secara natural dalam percakapan.\n\n${memoriesBlock}\n` : ''}`;
+${contextBlock ? `Gunakan konteks di atas sebagai latarbelakang. Jangan kaku — integrasikan secara natural dalam percakapan.\n\n${contextBlock}\n` : ''}`;
 
         const SYSTEM_PROMPT = `Nama: Thirty. Ciptaan: Maha Raja Ahdi Khalida Fathir.
 Waktu sekarang (WIB): ${currentTime}
@@ -424,18 +410,60 @@ ${promptRules}`;
     }
 }
 
-export async function summarizeText(text, mode = 'asik', chatId = null) {
-    const prompt = `Rangkum teks berikut dengan ringkas dan jelas:\n\n${text}`;
-    return callAI(prompt, [], mode, chatId);
+let _intentCache = new Map();
+
+export function classifyIntentSync(prompt) {
+    const trimmed = prompt.toLowerCase().trim();
+    if (trimmed.startsWith('/')) return { intent: 'command', confidence: 1, entities: {} };
+    if (/^(iya|ya|oke|ok|sip|oh|ohh|wow|hmm|hm|hehe|haha|lol|wkwk|🤣|😂|😅|😁|👍|🙏|✅|✅|🎉|🔥|💪|😭|😔|😢|🥺|😤|😡|😠|😩|😫|🥱|😴|🤔|🧐|🤨|😏|😌|😊|☺️|🙂|😐)\s*$/.test(trimmed)) {
+        return { intent: 'acknowledgment', confidence: 0.9, entities: {} };
+    }
+    if (/^(makasih|thanks|thx|thank|trims|matur|suwun)/i.test(trimmed)) {
+        return { intent: 'gratitude', confidence: 0.9, entities: {} };
+    }
+    if (/(?:^|\s)(?:siapa|apa|kenapa|bagaimana|kapan|dimana|mengapa|berapa|gimana|knp|bgmn)\s/i.test(trimmed)) {
+        return { intent: 'question', confidence: 0.7, entities: {} };
+    }
+    if (/(?:tolong|bantu|minta|buat|bikinin|carikan|jabarin|jelasin|terangin)/i.test(trimmed)) {
+        return { intent: 'request', confidence: 0.6, entities: {} };
+    }
+    if (/(?:curhat|sedih|kesel|sebel|bet|bete|galau|bosen|jenuh|kesepian|cape|capek|lelah|pusing|stress|stres)/i.test(trimmed)) {
+        return { intent: 'venting', confidence: 0.6, entities: {} };
+    }
+    return { intent: 'general', confidence: 0.5, entities: {} };
 }
 
-export async function chatWithContext(userMessage, groupHistory, mode = 'asik', chatId = null) {
-    const history = groupHistory.map(m => ({
+export async function chatWithContext(userMessage, mode = 'asik', chatId = null) {
+    // 1. Build optimized context (profile + summary + RAG + trimmed history)
+    const ctx = buildContext(chatId, userMessage);
+
+    // 2. Extract user facts async (fire & forget)
+    if (chatId) {
+        extractFactsAsync(chatId, userMessage).catch(() => {});
+    }
+
+    // 3. Classify intent (sync rule-based for speed)
+    const intent = classifyIntentSync(userMessage);
+    console.log(`🎯 Intent: ${intent.intent} (${intent.confidence}) for: ${userMessage.substring(0, 60)}`);
+
+    // 4. Build history from trimmed messages
+    const history = ctx.history.map(m => ({
         role: m.sender === 'Thirty (Bot)' ? 'assistant' : 'user',
         content: m.message,
     }));
 
-    return callAI(userMessage, history, mode, chatId);
+    // 5. Build context block if available
+    const useContextBlock = ctx.contextText || '';
+
+    // 6. Call AI with context block
+    const result = await callAI(userMessage, history, mode, chatId, useContextBlock);
+
+    // 7. Async summarization (fire & forget) every 10+ messages
+    if (chatId && ctx.history.length > 8) {
+        summarizeConversationAsync(chatId).catch(() => {});
+    }
+
+    return result;
 }
 
 export async function transcribeAudio(filePath) {
@@ -452,7 +480,7 @@ export async function transcribeAudio(filePath) {
     }
 }
 
-export async function callAIVision(prompt, base64Image, mode = 'asik', chatId = null) {
+export async function callAIVision(prompt, base64Image, mode = 'asik', chatId = null, contextBlock = '') {
     try {
         const modeKey = mode.toLowerCase();
         const allModes = getModes();
@@ -460,21 +488,6 @@ export async function callAIVision(prompt, base64Image, mode = 'asik', chatId = 
         const temperature = (getModeTemperatures())[modeKey] ?? 1.0;
         const now = new Date();
         const currentTime = now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
-
-        let memoriesBlock = '';
-        if (chatId) {
-            try {
-                const ragMemories = searchMemoriesRAG(chatId, prompt || '', 4);
-                if (ragMemories.length > 0) {
-                    memoriesBlock = '\n\nYang kamu ingat dari masa lalu:\n';
-                    memoriesBlock += ragMemories.map((m, i) =>
-                        `${i + 1}. ${m.content}`
-                    ).join('\n');
-                }
-            } catch (memErr) {
-                console.warn('⚠️ Vision RAG memory error:', memErr.message);
-            }
-        }
 
         const promptRules = `ATURAN GLOBAL (berlaku di SEMUA mode, tidak bisa di-override mode):
 - Kalau ditanya "kamu AI apa", "pakai model apa", "kamu Llama/GPT/dll":
@@ -490,7 +503,7 @@ export async function callAIVision(prompt, base64Image, mode = 'asik', chatId = 
 - JANGAN ulang saran/kalimat yang sama persis dalam satu percakapan. Kalau user bahas topik yang udah pernah dibahas, kasih sudut pandang BARU.
 - JANGAN pakai LaTeX/math notation ($, \frac, \sqrt, dll). WhatsApp gak render itu. Tulis matematika pake teks biasa: "3/4", "akar 2", "5 2/7".
 
-${memoriesBlock ? `Gunakan memori di atas sebagai konteks latarbelakang user. Jangan kaku — integrasikan secara natural dalam percakapan.\n\n${memoriesBlock}\n` : ''}`;
+${contextBlock ? `Gunakan konteks di atas sebagai latarbelakang. Jangan kaku — integrasikan secara natural dalam percakapan.\n\n${contextBlock}\n` : ''}`;
 
         const SYSTEM_PROMPT = `Nama: Thirty. Ciptaan: Maha Raja Ahdi Khalida Fathir.
 Waktu sekarang (WIB): ${currentTime}

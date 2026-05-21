@@ -1,5 +1,5 @@
 import { callAI, chatWithContext, transcribeAudio, callAIVision, getVoiceBuffer, extractAndStoreMemories, extractFromDocument } from '../services/ai.js';
-import { addContextMessage, getGroupHistory, getMode, isWhitelisted, addMemory, getInteractionCount, incrementInteractionCount, resetInteractionCount, broadcastTargets, pendingBroadcasts, deletePendingBroadcast } from '../services/db.js';
+import { addContextMessage, getMode, isWhitelisted, addMemory, getInteractionCount, incrementInteractionCount, resetInteractionCount, broadcastTargets, pendingBroadcasts, deletePendingBroadcast } from '../services/db.js';
 import { downloadMediaMessage } from 'baileys';
 import fs from 'fs/promises';
 import path from 'path';
@@ -186,7 +186,9 @@ export async function handleMessage(sock, msg) {
                 const base64Image = buffer.toString('base64');
                 const mode = getMode(remoteJid);
                 const prompt = (text && text !== '[Gambar]') ? text : null;
-                const response = await callAIVision(prompt, base64Image, mode, remoteJid);
+                const { buildContext } = await import('../services/contextBuilder.js');
+                const ctx = buildContext(remoteJid, prompt || '');
+                const response = await callAIVision(prompt, base64Image, mode, remoteJid, ctx.contextText);
                 await sock.sendMessage(remoteJid, { text: response });
                 return;
             } catch (err) {
@@ -306,17 +308,11 @@ export async function handleMessage(sock, msg) {
                 // Fallback: direct AI call
                 await sock.sendPresenceUpdate('composing', remoteJid);
                 const mode = getMode(remoteJid);
-                let history = [];
-                if (GROUP_CONTEXT_ENABLED) {
-                    history = getGroupHistory(remoteJid);
-                }
                 let promptText = text;
                 if (quotedText) {
                     promptText = `(Membalas pesan: "${quotedText}")\n\n${text}`;
                 }
-                const response = history.length > 0
-                    ? await chatWithContext(promptText, history, mode, remoteJid)
-                    : await callAI(promptText, [], mode, remoteJid);
+                const response = await chatWithContext(promptText, mode, remoteJid);
                 await sock.sendMessage(remoteJid, { text: response }, { quoted: msg }).catch(() => {
                     sock.sendMessage(remoteJid, { text: response });
                 });

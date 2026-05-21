@@ -119,6 +119,8 @@ async function initDb() {
     initSettingsTable();
     initTokenTable();
     initCustomModesTable();
+    initSummaryTable();
+    initUserProfileTable();
     saveDb();
     console.log('💾 Database initialized');
 }
@@ -779,4 +781,101 @@ export function deleteCustomMode(name) {
     if (!db) return;
     db.run('DELETE FROM custom_modes WHERE name = ?', [name]);
     saveDb();
+}
+
+// ==================== CONVERSATION SUMMARIES ====================
+
+export function initSummaryTable() {
+    if (!db) return;
+    db.run(`
+        CREATE TABLE IF NOT EXISTS conversation_summaries (
+            chat_id TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            message_count INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (chat_id, created_at)
+        )
+    `);
+    saveDb();
+}
+
+export function saveConversationSummary(chatId, summary, messageCount) {
+    if (!db) return;
+    db.run('INSERT INTO conversation_summaries (chat_id, summary, message_count) VALUES (?, ?, ?)',
+        [chatId, summary, messageCount || 0]);
+    saveDb();
+}
+
+export function getConversationSummary(chatId) {
+    if (!db) return '';
+    const r = db.exec(
+        'SELECT summary FROM conversation_summaries WHERE chat_id = ? ORDER BY created_at DESC LIMIT 1',
+        [chatId]
+    );
+    if (r.length && r[0].values.length) return r[0].values[0][0] || '';
+    return '';
+}
+
+// ==================== USER PROFILES ====================
+
+export function initUserProfileTable() {
+    if (!db) return;
+    db.run(`
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            jid TEXT PRIMARY KEY,
+            name TEXT DEFAULT '',
+            facts TEXT DEFAULT '[]',
+            timezone TEXT DEFAULT 'Asia/Jakarta',
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    saveDb();
+}
+
+export function getUserProfile(jid) {
+    if (!db) return null;
+    const r = db.exec('SELECT jid, name, facts, timezone FROM user_profiles WHERE jid = ?', [jid]);
+    if (!r.length || !r[0].values.length) return null;
+    const row = r[0].values[0];
+    let facts = [];
+    try { facts = JSON.parse(row[2] || '[]'); } catch { facts = []; }
+    return { jid: row[0], name: row[1] || '', facts, timezone: row[3] || 'Asia/Jakarta' };
+}
+
+export function saveUserProfile(jid, name, facts, timezone) {
+    if (!db) return;
+    db.run('INSERT OR REPLACE INTO user_profiles (jid, name, facts, timezone, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+        [jid, name || '', JSON.stringify(facts || []), timezone || 'Asia/Jakarta']);
+    saveDb();
+}
+
+export function addUserFact(jid, fact) {
+    if (!db || !fact) return;
+    const profile = getUserProfile(jid);
+    const facts = profile?.facts || [];
+    // Dedup: skip if similar fact exists
+    const exists = facts.some(f => f.toLowerCase().includes(fact.substring(0, 20).toLowerCase()));
+    if (exists) return;
+    facts.push(fact);
+    // Keep max 30 facts
+    if (facts.length > 30) facts.splice(0, facts.length - 30);
+    saveUserProfile(jid, profile?.name || '', facts, profile?.timezone || 'Asia/Jakarta');
+}
+
+export function getAllUserProfiles() {
+    if (!db) return [];
+    const r = db.exec('SELECT jid, name, facts, timezone, updated_at FROM user_profiles ORDER BY updated_at DESC');
+    if (!r.length) return [];
+    const cols = r[0].columns;
+    return r[0].values.map(row => {
+        const obj = {};
+        cols.forEach((c, i) => {
+            if (c === 'facts') {
+                try { obj[c] = JSON.parse(row[i] || '[]'); } catch { obj[c] = []; }
+            } else {
+                obj[c] = row[i];
+            }
+        });
+        return obj;
+    });
 }

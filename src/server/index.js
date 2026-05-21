@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { getAllSkills, getSkill, setSkillEnabled, getSkillConfig, setSkillConfig, getAllSkillConfigs, getAllWhitelist, addWhitelist, removeWhitelist, getAllSettings, getSetting, setSetting, getTokenUsageSummary, resetTokenUsage, getAllCustomModes, getCustomMode, saveCustomMode, deleteCustomMode } from '../services/db.js';
+import { getAllSkills, getSkill, setSkillEnabled, getSkillConfig, setSkillConfig, getAllSkillConfigs, getAllWhitelist, addWhitelist, removeWhitelist, getAllSettings, getSetting, setSetting, getTokenUsageSummary, resetTokenUsage, getAllCustomModes, getCustomMode, saveCustomMode, deleteCustomMode, getAllUserProfiles, getUserProfile, saveUserProfile } from '../services/db.js';
 import { getSkillNames } from '../skills/_loader.js';
 import { reloadAI, fetchAvailableModels, getGroqClient, invalidateModeCache } from '../services/ai.js';
 
@@ -283,6 +283,23 @@ export function startServer() {
     app.delete('/api/modes/custom/:name', (req, res) => {
         deleteCustomMode(req.params.name);
         invalidateModeCache();
+        res.json({ success: true });
+    });
+
+    // ==================== USER PROFILES ====================
+    app.get('/api/profiles', (req, res) => {
+        res.json(getAllUserProfiles());
+    });
+
+    app.get('/api/profiles/:jid', (req, res) => {
+        const profile = getUserProfile(req.params.jid);
+        res.json(profile || { jid: req.params.jid, name: '', facts: [], timezone: 'Asia/Jakarta' });
+    });
+
+    app.put('/api/profiles/:jid', (req, res) => {
+        const { name, facts, timezone } = req.body;
+        const profile = getUserProfile(req.params.jid) || {};
+        saveUserProfile(req.params.jid, name || profile.name || '', facts || profile.facts || [], timezone || profile.timezone || 'Asia/Jakarta');
         res.json({ success: true });
     });
 

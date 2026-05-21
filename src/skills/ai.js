@@ -16,19 +16,12 @@ export default {
 
         const mode = getMode(remoteJid);
 
-        let history = [];
-        if (GROUP_CONTEXT_ENABLED) {
-            history = getGroupHistory(remoteJid);
-        }
-
         let promptText = text;
         if (quotedText) {
             promptText = `(Membalas pesan: "${quotedText}")\n\n${text}`;
         }
 
-        const response = history.length > 0
-            ? await chatWithContext(promptText, history, mode, remoteJid)
-            : await callAI(promptText, [], mode, remoteJid);
+        const response = await chatWithContext(promptText, mode, remoteJid);
 
         if (isAudio) {
             const voiceBuffer = await getVoiceBuffer(response);

@@ -83,6 +83,7 @@ input:focus { outline: none; border-color: #22d3ee; }
     <button class="tab" data-tab="settings">Settings</button>
     <button class="tab" data-tab="config">API Keys</button>
     <button class="tab" data-tab="persona">Persona</button>
+    <button class="tab" data-tab="profiles">Profiles</button>
   </div>
 
   <div id="tab-skills" class="tab-content active"></div>
@@ -90,6 +91,7 @@ input:focus { outline: none; border-color: #22d3ee; }
   <div id="tab-settings" class="tab-content"></div>
   <div id="tab-config" class="tab-content"></div>
   <div id="tab-persona" class="tab-content"></div>
+  <div id="tab-profiles" class="tab-content"></div>
 </div>
 
 <div id="loginOverlay" style="position:fixed;inset:0;background:#0f172a;display:flex;align-items:center;justify-content:center;z-index:999">
@@ -617,6 +619,30 @@ async function deletePersona(name) {
   loadPersona();
 }
 
+// ==================== PROFILES ====================
+async function loadProfiles() {
+  const profiles = await api('/api/profiles');
+  let html = `<h3 style="font-size:16px;margin-bottom:16px">📋 Profil User</h3>
+  <p class="text-muted" style="font-size:13px;margin-bottom:16px">Fakta-fakta yang diingat bot tentang setiap user (diekstrak otomatis dari percakapan)</p>`;
+  if (!profiles.length) {
+    html += '<div class="empty">Belum ada profil user. Ajak bot ngobrol dulu!</div>';
+  } else {
+    html += `<table><thead><tr><th>User</th><th>Fakta</th><th>Timezone</th><th>Terakhir Update</th></tr></thead><tbody>`;
+    for (const p of profiles) {
+      const facts = (p.facts || []).map(f => `<span style="background:#0f172a;padding:2px 8px;border-radius:12px;font-size:12px;margin:2px;display:inline-block">${f}</span>`).join('');
+      const name = p.name || p.jid.split('@')[0];
+      html += `<tr>
+        <td><strong>${name}</strong><br><span style="font-size:11px;color:#64748b;font-family:monospace">${p.jid}</span></td>
+        <td style="max-width:400px">${facts || '<span class="text-muted">-</span>'}</td>
+        <td>${p.timezone || 'Asia/Jakarta'}</td>
+        <td style="font-size:12px">${p.updated_at || '-'}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  document.getElementById('tab-profiles').innerHTML = html;
+}
+
 // ==================== INIT ====================
 async function init() {
   document.getElementById('loginOverlay').style.display = 'none';
@@ -626,6 +652,7 @@ async function init() {
   await loadSettings();
   await loadApiKeys();
   await loadPersona();
+  await loadProfiles();
   setInterval(loadStatus, 10000);
 }
 
