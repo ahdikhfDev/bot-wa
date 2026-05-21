@@ -30,7 +30,8 @@ function getAuthToken() {
 }
 
 function requireAuth(req, res, next) {
-    if (req.path === '/api/auth/login' || req.path === '/api/auth/verify') {
+    const p = req.originalUrl;
+    if (p === '/api/auth/login' || p === '/api/auth/verify') {
         return next();
     }
     const auth = req.headers.authorization;
