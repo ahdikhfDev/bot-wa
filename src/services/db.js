@@ -117,6 +117,8 @@ async function initDb() {
 
     initSkillsTable();
     initSettingsTable();
+    initTokenTable();
+    initCustomModesTable();
     saveDb();
     console.log('💾 Database initialized');
 }
@@ -684,4 +686,97 @@ export function getAllSettings() {
     const settings = {};
     result[0].values.forEach(row => { settings[row[0]] = row[1]; });
     return settings;
+}
+
+// ==================== TOKEN USAGE ====================
+
+export function initTokenTable() {
+    if (!db) return;
+    db.run(`
+        CREATE TABLE IF NOT EXISTS token_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_tokens INTEGER DEFAULT 0,
+            completion_tokens INTEGER DEFAULT 0,
+            model TEXT DEFAULT '',
+            timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    saveDb();
+}
+
+export function recordTokenUsage(promptTokens, completionTokens, model) {
+    if (!db) return;
+    db.run('INSERT INTO token_usage (prompt_tokens, completion_tokens, model) VALUES (?, ?, ?)',
+        [promptTokens || 0, completionTokens || 0, model || '']);
+    saveDb();
+}
+
+export function getTokenUsageSummary() {
+    if (!db) return { totalPrompt: 0, totalCompletion: 0, totalAll: 0, count: 0 };
+    const r = db.exec(`
+        SELECT COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COUNT(*)
+        FROM token_usage
+    `);
+    if (!r.length) return { totalPrompt: 0, totalCompletion: 0, totalAll: 0, count: 0 };
+    const row = r[0].values[0];
+    const totalPrompt = parseInt(row[0]) || 0;
+    const totalCompletion = parseInt(row[1]) || 0;
+    return { totalPrompt, totalCompletion, totalAll: totalPrompt + totalCompletion, count: parseInt(row[2]) || 0 };
+}
+
+export function resetTokenUsage() {
+    if (!db) return;
+    db.run('DELETE FROM token_usage');
+    saveDb();
+}
+
+// ==================== CUSTOM MODES / PERSONA ====================
+
+export function initCustomModesTable() {
+    if (!db) return;
+    db.run(`
+        CREATE TABLE IF NOT EXISTS custom_modes (
+            name TEXT PRIMARY KEY,
+            system_prompt TEXT NOT NULL,
+            temperature REAL DEFAULT 0.85,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    saveDb();
+}
+
+export function getAllCustomModes() {
+    if (!db) return [];
+    const r = db.exec('SELECT name, system_prompt, temperature, created_at FROM custom_modes ORDER BY name');
+    if (!r.length) return [];
+    const cols = r[0].columns;
+    return r[0].values.map(row => {
+        const obj = {};
+        cols.forEach((c, i) => obj[c] = row[i]);
+        return obj;
+    });
+}
+
+export function getCustomMode(name) {
+    if (!db) return null;
+    const r = db.exec('SELECT * FROM custom_modes WHERE name = ?', [name]);
+    if (!r.length || !r[0].values.length) return null;
+    const cols = r[0].columns;
+    const row = r[0].values[0];
+    const obj = {};
+    cols.forEach((c, i) => obj[c] = row[i]);
+    return obj;
+}
+
+export function saveCustomMode(name, systemPrompt, temperature = 0.85) {
+    if (!db) return;
+    db.run('INSERT OR REPLACE INTO custom_modes (name, system_prompt, temperature) VALUES (?, ?, ?)',
+        [name, systemPrompt, temperature]);
+    saveDb();
+}
+
+export function deleteCustomMode(name) {
+    if (!db) return;
+    db.run('DELETE FROM custom_modes WHERE name = ?', [name]);
+    saveDb();
 }

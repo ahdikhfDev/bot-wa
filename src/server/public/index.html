@@ -82,12 +82,14 @@ input:focus { outline: none; border-color: #22d3ee; }
     <button class="tab" data-tab="whitelist">Whitelist</button>
     <button class="tab" data-tab="settings">Settings</button>
     <button class="tab" data-tab="config">API Keys</button>
+    <button class="tab" data-tab="persona">Persona</button>
   </div>
 
   <div id="tab-skills" class="tab-content active"></div>
   <div id="tab-whitelist" class="tab-content"></div>
   <div id="tab-settings" class="tab-content"></div>
   <div id="tab-config" class="tab-content"></div>
+  <div id="tab-persona" class="tab-content"></div>
 </div>
 
 <div id="loginOverlay" style="position:fixed;inset:0;background:#0f172a;display:flex;align-items:center;justify-content:center;z-index:999">
@@ -232,11 +234,14 @@ async function loadStatus() {
   const m = Math.floor((uptime % 3600) / 60);
   document.getElementById('uptimeDisplay').textContent = h + 'h ' + m + 'm';
 
+  const tokens = await api('/api/tokens');
+  const fmt = n => n >= 1000000 ? (n/1000000).toFixed(1)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : n;
   document.getElementById('statsGrid').innerHTML = `
     <div class="card"><h3>Status Bot</h3><div class="value ${s.connected ? 'text-green' : 'text-red'}">${s.connected ? '● Aktif' : '○ Mati'}</div><div class="sub">WhatsApp connection</div></div>
     <div class="card"><h3>Skills Aktif</h3><div class="value text-cyan">${s.skillsCount || 0}</div><div class="sub">Total skill terinstall</div></div>
     <div class="card"><h3>Whitelist</h3><div class="value">${s.whitelistCount || 0}</div><div class="sub">User yang diizinkan</div></div>
     <div class="card"><h3>Uptime</h3><div class="value">${h}<span style="font-size:14px">j</span> ${m}<span style="font-size:14px">m</span></div><div class="sub">Bot berjalan</div></div>
+    <div class="card"><h3>Token Usage</h3><div class="value text-cyan">${fmt(tokens.totalAll || 0)}</div><div class="sub">${tokens.count || 0} calls | P:${fmt(tokens.totalPrompt||0)} C:${fmt(tokens.totalCompletion||0)}</div></div>
   `;
 }
 
@@ -499,6 +504,119 @@ async function saveModel(modelId) {
   document.getElementById('modelStatus').textContent = `✅ Model disimpan: ${modelId}`;
 }
 
+// ==================== PERSONA (CUSTOM MODES) ====================
+async function loadPersona() {
+  const data = await api('/api/modes/custom');
+  let html = `<h3 style="font-size:16px;margin-bottom:4px">🧠 Mode / Persona</h3>
+  <p class="text-muted" style="font-size:13px;margin-bottom:16px">Mode default (bawaan) + mode kustom yang bisa diedit bebas</p>`;
+
+  // Default modes
+  html += `<div class="card" style="margin-bottom:16px">
+    <h4 style="font-size:14px;margin-bottom:8px">📌 Mode Default</h4>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">`;
+  for (const d of data.defaults) {
+    html += `<span class="badge" style="background:#1e293b;color:#94a3b8;padding:6px 14px;border:1px solid #334155">${d.name}</span>`;
+  }
+  html += `</div></div>`;
+
+  // Custom modes
+  html += `<div class="flex flex-between mb-4">
+    <h4 style="font-size:14px">⚡ Mode Kustom</h4>
+    <button class="btn btn-primary" onclick="showAddPersona()">+ Buat Baru</button>
+  </div>`;
+
+  if (!data.custom.length) {
+    html += '<div class="empty">Belum ada mode kustom. Klik "Buat Baru" untuk membuat persona sendiri.</div>';
+  } else {
+    html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">`;
+    for (const m of data.custom) {
+      const preview = (m.system_prompt || '').substring(0, 120) + '...';
+      html += `<div class="card">
+        <div class="flex flex-between" style="margin-bottom:8px">
+          <strong style="color:#22d3ee">${m.name}</strong>
+          <div class="flex gap-2">
+            <button class="btn btn-sm btn-primary" onclick="editPersona('${m.name}')">Edit</button>
+            <button class="btn btn-sm btn-danger" onclick="deletePersona('${m.name}')">Hapus</button>
+          </div>
+        </div>
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:4px">Temperature: ${m.temperature}</div>
+        <div style="font-size:12px;color:#64748b;line-height:1.4">${preview}</div>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+  document.getElementById('tab-persona').innerHTML = html;
+}
+
+function showAddPersona() {
+  const div = document.createElement('div');
+  div.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100';
+  div.innerHTML = personFormHtml('', 'Buat Persona Baru', 'createPersona(this)');
+  document.body.appendChild(div);
+}
+
+function editPersona(name) {
+  api('/api/modes/custom/' + name).then(m => {
+    const div = document.createElement('div');
+    div.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100';
+    div.innerHTML = personFormHtml(m.name, 'Edit: ' + m.name, 'updatePersona(this, "' + m.name + '")', m.system_prompt, m.temperature);
+    document.body.appendChild(div);
+  });
+}
+
+function personFormHtml(name, title, onsubmit, prompt, temp) {
+  return `<div class="card" style="min-width:500px;max-width:600px;max-height:90vh;overflow-y:auto">
+    <div class="flex flex-between mb-4"><h3 style="font-size:16px">${title}</h3>
+      <button class="btn btn-sm btn-danger" onclick="this.closest('div[style]').remove()">✕</button></div>
+    ${name ? '' : '<div style="margin-bottom:12px"><input id="pf-name" placeholder="Nama mode (contoh: galak, imut, santai)" value="' + (name || '') + '"></div>'}
+    <div style="margin-bottom:12px">
+      <label style="font-size:13px;color:#94a3b8;display:block;margin-bottom:4px">System Prompt (instruksi untuk AI)</label>
+      <textarea id="pf-prompt" rows="8" style="width:100%;background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:8px 12px;border-radius:8px;font-size:13px;font-family:monospace;resize:vertical">${prompt || ''}</textarea>
+    </div>
+    <div style="margin-bottom:16px">
+      <label style="font-size:13px;color:#94a3b8;display:block;margin-bottom:4px">Temperature (0.1 = kaku, 1.0 = kreatif) <span id="pf-temp-val">${temp || 0.85}</span></label>
+      <input type="range" id="pf-temp" min="0.1" max="1.0" step="0.05" value="${temp || 0.85}" style="width:100%" oninput="document.getElementById('pf-temp-val').textContent=this.value">
+    </div>
+    <button class="btn btn-primary" onclick="${onsubmit}" style="width:100%;padding:10px">Simpan</button>
+    <div id="pf-error" style="color:#fca5a5;font-size:13px;margin-top:8px;display:none"></div>
+  </div>`;
+}
+
+async function createPersona(btn) {
+  const name = document.getElementById('pf-name').value.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  const prompt = document.getElementById('pf-prompt').value.trim();
+  const temp = document.getElementById('pf-temp').value;
+  if (!name || !prompt) { showPfError('Isi nama dan prompt'); return; }
+  const r = await api('/api/modes/custom', {
+    method: 'POST', body: JSON.stringify({ name, system_prompt: prompt, temperature: temp })
+  });
+  if (r.error) { showPfError(r.error); return; }
+  btn.closest('div[style]').remove();
+  loadPersona();
+}
+
+async function updatePersona(btn, name) {
+  const prompt = document.getElementById('pf-prompt').value.trim();
+  const temp = document.getElementById('pf-temp').value;
+  if (!prompt) { showPfError('Isi prompt'); return; }
+  await api('/api/modes/custom/' + name, {
+    method: 'PUT', body: JSON.stringify({ system_prompt: prompt, temperature: temp })
+  });
+  btn.closest('div[style]').remove();
+  loadPersona();
+}
+
+function showPfError(msg) {
+  const el = document.getElementById('pf-error');
+  el.textContent = msg; el.style.display = 'block';
+}
+
+async function deletePersona(name) {
+  if (!confirm('Hapus mode "' + name + '"?')) return;
+  await api('/api/modes/custom/' + name, { method: 'DELETE' });
+  loadPersona();
+}
+
 // ==================== INIT ====================
 async function init() {
   document.getElementById('loginOverlay').style.display = 'none';
@@ -507,6 +625,7 @@ async function init() {
   await loadWhitelist();
   await loadSettings();
   await loadApiKeys();
+  await loadPersona();
   setInterval(loadStatus, 10000);
 }
 

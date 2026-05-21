@@ -2,9 +2,9 @@ import express from 'express';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { getAllSkills, getSkill, setSkillEnabled, getSkillConfig, setSkillConfig, getAllSkillConfigs, getAllWhitelist, addWhitelist, removeWhitelist, getAllSettings, getSetting, setSetting } from '../services/db.js';
+import { getAllSkills, getSkill, setSkillEnabled, getSkillConfig, setSkillConfig, getAllSkillConfigs, getAllWhitelist, addWhitelist, removeWhitelist, getAllSettings, getSetting, setSetting, getTokenUsageSummary, resetTokenUsage, getAllCustomModes, getCustomMode, saveCustomMode, deleteCustomMode } from '../services/db.js';
 import { getSkillNames } from '../skills/_loader.js';
-import { reloadAI, fetchAvailableModels, getGroqClient } from '../services/ai.js';
+import { reloadAI, fetchAvailableModels, getGroqClient, invalidateModeCache } from '../services/ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.WEB_PORT || '6789');
@@ -230,6 +230,60 @@ export function startServer() {
         } catch (err) {
             res.status(500).json({ error: err.message });
         }
+    });
+
+    // ==================== API: TOKEN USAGE ====================
+    app.get('/api/tokens', (req, res) => {
+        res.json(getTokenUsageSummary());
+    });
+
+    app.delete('/api/tokens', (req, res) => {
+        resetTokenUsage();
+        res.json({ success: true });
+    });
+
+    // ==================== API: CUSTOM MODES (PERSONA) ====================
+    app.get('/api/modes/custom', (req, res) => {
+        const modes = getAllCustomModes();
+        const defaultModes = [
+            { name: 'asik', isDefault: true },
+            { name: 'bad', isDefault: true },
+            { name: 'formal', isDefault: true },
+            { name: 'profesional', isDefault: true },
+        ];
+        res.json({ defaults: defaultModes, custom: modes });
+    });
+
+    app.get('/api/modes/custom/:name', (req, res) => {
+        const mode = getCustomMode(req.params.name);
+        if (!mode) return res.status(404).json({ error: 'Mode not found' });
+        res.json(mode);
+    });
+
+    app.post('/api/modes/custom', (req, res) => {
+        const { name, system_prompt, temperature } = req.body;
+        if (!name || !system_prompt) return res.status(400).json({ error: 'name and system_prompt required' });
+        const safeName = name.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        if (['asik', 'bad', 'formal', 'profesional'].includes(safeName)) {
+            return res.status(400).json({ error: 'Nama mode sudah dipakai oleh mode default' });
+        }
+        saveCustomMode(safeName, system_prompt, parseFloat(temperature) || 0.85);
+        invalidateModeCache();
+        res.json({ success: true, name: safeName });
+    });
+
+    app.put('/api/modes/custom/:name', (req, res) => {
+        const { system_prompt, temperature } = req.body;
+        if (!system_prompt) return res.status(400).json({ error: 'system_prompt required' });
+        saveCustomMode(req.params.name, system_prompt, parseFloat(temperature) || 0.85);
+        invalidateModeCache();
+        res.json({ success: true });
+    });
+
+    app.delete('/api/modes/custom/:name', (req, res) => {
+        deleteCustomMode(req.params.name);
+        invalidateModeCache();
+        res.json({ success: true });
     });
 
     // ==================== START ====================

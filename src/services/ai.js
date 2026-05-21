@@ -6,7 +6,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import os from 'os';
 import { PassThrough } from 'stream';
-import { addReminder, getMemories, searchMemoriesRAG, searchMemories, addMemory, getSetting, setSetting } from './db.js';
+import { addReminder, getMemories, searchMemoriesRAG, searchMemories, addMemory, getSetting, setSetting, recordTokenUsage, getAllCustomModes } from './db.js';
 
 // Use system ffmpeg on Linux (STB) for better compatibility, static on Windows
 const actualFfmpegPath = os.platform() === 'win32' ? ffmpegPath : 'ffmpeg';
@@ -69,7 +69,33 @@ export function getFallbackModels() {
     return [primary, ...known.filter(m => m !== primary)];
 }
 
-const MODES = {
+let _modesCache = null;
+
+export function invalidateModeCache() {
+    _modesCache = null;
+}
+
+function getModes() {
+    if (_modesCache) return _modesCache;
+    const modes = { ...BASE_MODES };
+    const custom = getAllCustomModes();
+    for (const c of custom) {
+        modes[c.name] = c.system_prompt;
+    }
+    _modesCache = modes;
+    return modes;
+}
+
+function getModeTemperatures() {
+    const temps = { ...BASE_TEMPS };
+    const custom = getAllCustomModes();
+    for (const c of custom) {
+        temps[c.name] = c.temperature;
+    }
+    return temps;
+}
+
+const BASE_MODES = {
     asik: `IDENTITAS — Kamu adalah teman deket yang nyambung dan apa adanya. Bukan asisten, bukan robot—temen ngobrol.
 
 CARA BICARA — lo/gw, singkatan natural (emg, bgt, sih, gak, udh, krn, dgn), pake emoji sesekali aja jangan tiap kalimat. Kalimat pendek-pendek, gak bertele-tele.
@@ -168,7 +194,7 @@ User: "apakah saya harus investasi crypto?"
 Lo: "Risiko: crypto sangat volatil (turunan 50%+ sebulan). Alokasi maks 5-10% portofolio. Jangan FOMO. DCA bitcoin lebih aman daripada altcoin kalo baru mulai."`,
 };
 
-const MODE_TEMPERATURES = {
+const BASE_TEMPS = {
     asik: 0.85,
     bad: 0.85,
     formal: 0.5,
@@ -216,8 +242,9 @@ function _trySaveReminder(prompt, chatId) {
 export async function callAI(prompt, history = [], mode = 'asik', chatId = null) {
     try {
         const modeKey = mode.toLowerCase();
-        const personality = MODES[modeKey] || MODES['asik'];
-        const temperature = MODE_TEMPERATURES[modeKey] ?? 1.0;
+        const allModes = getModes();
+        const personality = allModes[modeKey] || allModes['asik'];
+        const temperature = (getModeTemperatures())[modeKey] ?? 1.0;
         const now = new Date();
         const currentTime = now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
 
@@ -280,7 +307,9 @@ ${promptRules}`;
                     ...(chatId ? { tools: [REMINDER_TOOL], tool_choice: 'auto' } : {}),
                 });
 
-                console.log(`DEBUG AI Response (Model: ${currentModel}):`, JSON.stringify(completion, null, 2));
+                if (completion.usage) {
+                    recordTokenUsage(completion.usage.prompt_tokens, completion.usage.completion_tokens, currentModel);
+                }
 
                 let responseMessage = completion.choices[0]?.message;
                 let toolCalls = responseMessage?.tool_calls;
@@ -337,7 +366,9 @@ ${promptRules}`;
                         messages,
                         max_tokens: 1024,
                     });
-                    console.log(`DEBUG AI Response Final (Model: ${currentModel}):`, JSON.stringify(finalCompletion, null, 2));
+                    if (finalCompletion.usage) {
+                        recordTokenUsage(finalCompletion.usage.prompt_tokens, finalCompletion.usage.completion_tokens, currentModel);
+                    }
                     return finalCompletion.choices[0]?.message?.content;
                 }
 
@@ -410,8 +441,9 @@ export async function transcribeAudio(filePath) {
 export async function callAIVision(prompt, base64Image, mode = 'asik', chatId = null) {
     try {
         const modeKey = mode.toLowerCase();
-        const personality = MODES[modeKey] || MODES['asik'];
-        const temperature = MODE_TEMPERATURES[modeKey] ?? 1.0;
+        const allModes = getModes();
+        const personality = allModes[modeKey] || allModes['asik'];
+        const temperature = (getModeTemperatures())[modeKey] ?? 1.0;
         const now = new Date();
         const currentTime = now.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
 
@@ -456,7 +488,10 @@ ${promptRules}`;
         const completion = await getGroqClient().chat.completions.create({
             model: "meta-llama/llama-4-scout-17b-16e-instruct",
             messages: [
-                { role: 'system', content: SYSTEM_PROMPT },
+                {
+                    role: 'system',
+                    content: SYSTEM_PROMPT
+                },
                 {
                     role: 'user',
                     content: [
@@ -469,6 +504,9 @@ ${promptRules}`;
             temperature,
         });
 
+        if (completion.usage) {
+            recordTokenUsage(completion.usage.prompt_tokens, completion.usage.completion_tokens, 'llama-4-scout-17b-16e-instruct');
+        }
         return completion.choices[0]?.message?.content || 'Maaf, aku tidak bisa melihat gambarnya dengan jelas.';
     } catch (error) {
         console.error('❌ Groq Vision Error:', error.message);
@@ -611,6 +649,9 @@ Jika tidak ada fakta penting, output: []`
             max_tokens: 512,
             temperature: 0.3,
         });
+        if (completion.usage) {
+            recordTokenUsage(completion.usage.prompt_tokens, completion.usage.completion_tokens, 'llama-3.1-8b-instant');
+        }
 
         const raw = completion.choices[0]?.message?.content?.trim();
         if (!raw || raw === '[]') return;
@@ -666,6 +707,9 @@ Jika tidak ada, output: []`
             max_tokens: 512,
             temperature: 0.3,
         });
+        if (completion.usage) {
+            recordTokenUsage(completion.usage.prompt_tokens, completion.usage.completion_tokens, 'llama-3.1-8b-instant');
+        }
 
         const raw = completion.choices[0]?.message?.content?.trim();
         if (!raw || raw === '[]') return;
