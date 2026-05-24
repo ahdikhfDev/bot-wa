@@ -9,7 +9,7 @@ const config = {
     host: '192.168.1.198',
     port: 22,
     username: 'root',
-    password: 'ahdikhf2006'
+    password: ''
 };
 
 const remoteDir = '/root/thirty-bot';
