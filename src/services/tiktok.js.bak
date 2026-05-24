@@ -1,0 +1,194 @@
+import { chromium } from 'playwright';
+import { getSetting, setSetting } from './db.js';
+import path from 'path';
+
+const COOKIES_KEY = 'tiktok_cookies';
+const BROWSER_PATH = '/home/thirty/.cache/ms-playwright/chromium-1223/chrome-linux/chrome';
+
+let _browser = null;
+
+async function getBrowser() {
+  if (_browser && _browser.isConnected()) return _browser;
+  _browser = await chromium.launch({
+    executablePath: BROWSER_PATH,
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--single-process',
+      '--disable-gpu',
+      '--no-zygote',
+      '--disable-extensions',
+      '--disable-sync',
+    ],
+  });
+  return _browser;
+}
+
+export async function closeBrowser() {
+  if (_browser) {
+    try { await _browser.close(); } catch {}
+    _browser = null;
+  }
+}
+
+export async function saveCookies(page) {
+  const cookies = await page.context().cookies();
+  setSetting(COOKIES_KEY, JSON.stringify(cookies));
+}
+
+export async function loadCookies(page) {
+  const raw = getSetting(COOKIES_KEY);
+  if (raw) {
+    try {
+      const cookies = JSON.parse(raw);
+      await page.context().addCookies(cookies);
+      return true;
+    } catch { return false; }
+  }
+  return false;
+}
+
+export function hasCookies() {
+  return !!getSetting(COOKIES_KEY);
+}
+
+export async function getLoginQR() {
+  const browser = await getBrowser();
+  const page = await browser.newPage({
+    viewport: { width: 1280, height: 720 },
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  });
+
+  try {
+    await page.goto('https://www.tiktok.com/login', { waitUntil: 'networkidle', timeout: 30000 });
+
+    // Look for QR code image
+    const qrSelector = 'img[src*="qrcode"], img[alt*="QR"], [data-testid="qrcode"] img, .qr-code img, div[class*="qr"] img';
+    let qrSrc = null;
+
+    try {
+      await page.waitForSelector(qrSelector, { timeout: 15000 });
+      qrSrc = await page.getAttribute(qrSelector, 'src');
+    } catch {
+      // Try clicking QR login option if needed
+      const qrBtns = page.locator('button, a, div[role="button"]').filter({ hasText: /qr|scan|phone/i });
+      const btnCount = await qrBtns.count();
+      if (btnCount > 0) {
+        await qrBtns.first().click();
+        await page.waitForTimeout(3000);
+        try {
+          await page.waitForSelector(qrSelector, { timeout: 10000 });
+          qrSrc = await page.getAttribute(qrSelector, 'src');
+        } catch {}
+      }
+    }
+
+    if (qrSrc) {
+      await saveCookies(page);
+      return { qrImage: qrSrc, page };
+    }
+
+    // If no QR, check if already logged in
+    const currentUrl = page.url();
+    if (!currentUrl.includes('login')) {
+      await saveCookies(page);
+      await page.close();
+      return { alreadyLoggedIn: true };
+    }
+
+    return { error: 'Gagal menemukan QR code login. Coba buka manual TikTok login.' };
+  } catch (err) {
+    try { await page.close(); } catch {}
+    return { error: err.message };
+  }
+}
+
+export async function uploadVideo(filePath, caption = '') {
+  const browser = await getBrowser();
+  const page = await browser.newPage({
+    viewport: { width: 1280, height: 720 },
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  });
+
+  try {
+    // Load saved cookies
+    const hasCookies = await loadCookies(page);
+    if (!hasCookies) {
+      await page.close();
+      return { error: 'Belum login TikTok. Kirim /logintiktok dulu.' };
+    }
+
+    // Go to upload page
+    await page.goto('https://www.tiktok.com/upload', { waitUntil: 'networkidle', timeout: 30000 });
+
+    // Check if we're on login page (cookies expired)
+    const currentUrl = page.url();
+    if (currentUrl.includes('login')) {
+      await page.close();
+      return { error: 'Sesi TikTok expired. Kirim /logintiktok untuk login ulang.' };
+    }
+
+    // Check for upload page elements
+    await page.waitForTimeout(3000);
+
+    // Find file input
+    const fileInput = page.locator('input[type="file"]');
+    if (await fileInput.count() === 0) {
+      await page.close();
+      return { error: 'Tidak dapat menemukan upload area. Mungkin TikTok berubah.' };
+    }
+
+    // Upload file
+    const absolutePath = path.resolve(filePath);
+    await fileInput.setInputFiles(absolutePath);
+
+    // Wait for upload to process
+    await page.waitForTimeout(5000);
+
+    // Wait for progress to complete
+    try {
+      await page.waitForFunction(() => {
+        const progress = document.querySelector('[class*="progress"], [class*="uploading"]');
+        if (!progress) return true;
+        return progress.getAttribute('data-percent') === '100' || !progress.isConnected;
+      }, { timeout: 120000 });
+    } catch {}
+
+    // Fill caption
+    const captionArea = page.locator('[contenteditable="true"], textarea, [data-text="true"], div[class*="caption"] div[contenteditable]');
+    if (await captionArea.count() > 0) {
+      await captionArea.first().click();
+      await page.keyboard.type(caption, { delay: 30 });
+    }
+
+    await page.waitForTimeout(2000);
+
+    // Click Post button
+    const postBtn = page.locator('button').filter({ hasText: /Post|Unggah|Kirim/i });
+    if (await postBtn.count() === 0) {
+      await page.close();
+      return { error: 'Tidak dapat menemukan tombol Post.' };
+    }
+
+    await postBtn.first().click();
+
+    // Wait for success
+    let success = false;
+    try {
+      await page.waitForURL(/tiktok\.com\/($|feed|@)/, { timeout: 60000 });
+      success = true;
+    } catch {
+      // Check if success message appeared
+      const successText = page.locator('text=/Uploaded|Posted|Success|Berhasil|Telah diunggah/i');
+      success = await successText.count() > 0;
+    }
+
+    await page.close();
+    return { success };
+  } catch (err) {
+    try { await page.close(); } catch {}
+    return { error: err.message };
+  }
+}

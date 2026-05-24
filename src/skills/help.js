@@ -23,7 +23,6 @@ Halo! Saya adalah *Thirty*, asisten AI cerdas yang siap membantu kebutuhanmu. �
 
 🌍 *FITUR UTILITY*
 • 🌤️ */cuaca [kota]* : Cek cuaca (atau */weather*)
-• 🌍 */translate [teks]* : Terjemahkan ke Indonesia
 • 🧠 *Auto Learning* : Bot belajar dari percakapan — makin ngobrol makin pinter
 • 🧠 *RAG Memory* : Bot ingat topik lama & konten dokumen
 • 📝 */rangkum [teks]* : Ringkas teks panjang

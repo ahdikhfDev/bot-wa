@@ -7,6 +7,44 @@ import ffmpegPath from 'ffmpeg-static';
 import os from 'os';
 import { PassThrough } from 'stream';
 import { addReminder, getMemories, searchMemoriesRAG, searchMemories, addMemory, getSetting, setSetting, recordTokenUsage, getAllCustomModes, getGroupHistory } from './db.js';
+
+// 9Router model cache for combo
+let _9routerModelsCache = [];
+let _9routerCacheTime = 0;
+let _9routerFailedModels = new Set();
+const _9ROUTER_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+// Excluded model patterns (non-chat models + EOL)
+const _9ROUTER_EXCLUDE = /asr|whisper|embedding|rerank|classification|tts|speech|glm4\.7|z-ai/i;
+
+async function refresh9RouterModels() {
+    try {
+        const apiKey = getSetting('9ROUTER_API_KEY') || process.env['9ROUTER_API_KEY'];
+        if (!apiKey) return;
+        const resp = await fetch('http://localhost:20128/v1/models', {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const models = (data.data || data.models || [])
+            .map(m => m.id || m)
+            .filter(id => !_9ROUTER_EXCLUDE.test(id) && !id.startsWith('thirty/'))
+            .sort(() => Math.random() - 0.5); // shuffle
+        if (models.length > 0) {
+            _9routerModelsCache = models;
+            _9routerCacheTime = Date.now();
+            console.log('🔄 9Router combo models:', models.join(', '));
+        }
+    } catch (err) {
+        console.warn('⚠️ 9Router model refresh error:', err.message);
+    }
+}
+
+function getRandom9RouterModel() {
+    if (_9routerModelsCache.length === 0) return 'openrouter/openrouter/free';
+    const idx = Math.floor(Math.random() * _9routerModelsCache.length);
+    return _9routerModelsCache[idx];
+}
 import { buildContext, summarizeConversationAsync } from './contextBuilder.js';
 import { extractFactsAsync } from './userProfile.js';
 
@@ -410,6 +448,22 @@ ${promptRules}`;
     }
 }
 
+// ==================== CHAT WITH PROVIDER SELECTION ====================
+
+export async function chatWithProvider(prompt, history = [], mode = 'asik', chatId = null, contextBlock = '') {
+    const provider = getSetting('AI_PROVIDER') || 'groq';
+
+    if (provider === '9router') {
+        const result = await callAI9Router(prompt, history, mode, chatId, contextBlock);
+        if (result) return result;
+        // 9Router gagal, fallback ke Groq
+        console.log('🔄 9Router gagal, fallback ke Groq...');
+    }
+
+    // Default: pake Groq
+    return callAI(prompt, history, mode, chatId, contextBlock);
+}
+
 export async function summarizeText(text, mode = 'asik', chatId = null) {
     return callAI(`Rangkum teks berikut dengan ringkas dan jelas:\n\n${text}`, [], mode, chatId, '');
 }
@@ -460,7 +514,7 @@ export async function chatWithContext(userMessage, mode = 'asik', chatId = null)
     const useContextBlock = ctx.contextText || '';
 
     // 6. Call AI with context block
-    const result = await callAI(userMessage, history, mode, chatId, useContextBlock);
+    const result = await chatWithProvider(userMessage, history, mode, chatId, useContextBlock);
 
     // 7. Async summarization (fire & forget) every 10+ messages
     if (chatId && ctx.history.length > 8) {
@@ -468,6 +522,101 @@ export async function chatWithContext(userMessage, mode = 'asik', chatId = null)
     }
 
     return result;
+}
+
+// ==================== 9ROUTER AI (FALLBACK) ====================
+// Pake 9Router dengan model gratis openrouter/openrouter/free
+
+async function callAI9Router(prompt, history = [], mode = 'asik', chatId = null, contextBlock = '') {
+    const apiKey = getSetting('9ROUTER_API_KEY') || process.env['9ROUTER_API_KEY'];
+    if (!apiKey) return null;
+
+    // Refresh model cache if expired
+    if (Date.now() - _9routerCacheTime > _9ROUTER_CACHE_TTL) {
+        await refresh9RouterModels();
+    }
+
+    const modeKey = mode.toLowerCase();
+    const allModes = getModes();
+    const personality = allModes[modeKey] || allModes['asik'];
+    const temperature = (getModeTemperatures())[modeKey] ?? 1.0;
+
+    const SYSTEM_PROMPT = `Nama: Thirty. Ciptaan: Maha Raja Ahdi Khalida Fathir.
+${personality}`;
+
+    const messages = [
+        { role: 'system', content: SYSTEM_PROMPT },
+        ...history,
+        { role: 'user', content: prompt },
+    ];
+
+    // Try random models from cache (up to 5 attempts)
+    const maxAttempts = _9routerModelsCache.length > 0 ? Math.min(_9routerModelsCache.length, 5) : 1;
+    const tried = new Set();
+
+    for (let i = 0; i < maxAttempts; i++) {
+        let model;
+        if (maxAttempts > 1) {
+            // Pick random model that hasn't been tried and hasn't failed before
+            const available = _9routerModelsCache.filter(m => !tried.has(m) && !_9routerFailedModels.has(m));
+            if (available.length === 0) break;
+            model = available[Math.floor(Math.random() * available.length)];
+        } else {
+            model = 'openrouter/openrouter/free';
+        }
+        tried.add(model);
+
+        try {
+            const resp = await fetch('https://ai.akf.biz.id/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                },
+                body: JSON.stringify({
+                    model,
+                    messages,
+                    max_tokens: 1024,
+                    temperature,
+                    stream: false,
+                }),
+            });
+
+            if (!resp.ok) {
+                _9routerFailedModels.add(model);
+                const err = await resp.text().catch(() => '');
+                console.warn('⚠️ 9Router error (' + model + '):', resp.status, err.slice(0, 200));
+                continue;
+            }
+
+            // Read response as text first to handle non-JSON responses gracefully
+            let body;
+            try { body = await resp.text(); } catch { continue; }
+
+            let data;
+            try { data = JSON.parse(body); } catch {
+                _9routerFailedModels.add(model);
+                console.warn('⚠️ 9Router bad JSON (' + model + '):', body.slice(0, 100));
+                continue;
+            }
+
+            const text = data?.choices?.[0]?.message?.content;
+            if (data?.usage) {
+                recordTokenUsage(data.usage.prompt_tokens || 0, data.usage.completion_tokens || 0, model);
+            }
+            if (text) {
+                console.log('🤖 9Router combo: ' + model);
+                return text;
+            }
+        } catch (err) {
+            _9routerFailedModels.add(model);
+            console.warn('⚠️ 9Router fetch error (' + model + '):', err.message);
+            continue;
+        }
+    }
+
+    console.warn('⚠️ All 9Router models failed, falling back to Groq');
+    return null;
 }
 
 export async function transcribeAudio(filePath) {
@@ -517,7 +666,7 @@ ${personality}
 ${promptRules}`;
 
         const completion = await getGroqClient().chat.completions.create({
-            model: "meta-llama/llama-4-scout-17b-16e-instruct",
+            model: _activeModel,
             messages: [
                 {
                     role: 'system',

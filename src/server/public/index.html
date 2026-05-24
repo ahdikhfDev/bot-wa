@@ -6,23 +6,23 @@
 <title>Bot-WA · Dashboard</title>
 <style>
 :root {
-  --bg: #0b1120;
-  --surface: #131b2e;
-  --surface-2: #1a2540;
-  --surface-3: #243056;
-  --border: #1e2d4a;
-  --border-light: #2d4068;
-  --text: #e8edf5;
-  --text-2: #a0b3d9;
-  --text-3: #5e7399;
-  --accent: #22d3ee;
-  --accent-2: #06b6d4;
-  --green: #10b981;
-  --green-bg: #064e3b;
-  --red: #ef4444;
-  --red-bg: #7f1d1d;
-  --yellow: #f59e0b;
-  --yellow-bg: #713f12;
+  --bg: #000000;
+  --surface: #0d0d0d;
+  --surface-2: #1a1a1a;
+  --surface-3: #262626;
+  --border: #2a2a2a;
+  --border-light: #333333;
+  --text: #ffffff;
+  --text-2: #cccccc;
+  --text-3: #999999;
+  --accent: #ffffff;
+  --accent-2: #e0e0e0;
+  --green: #4ade80;
+  --green-bg: #1a3a2a;
+  --red: #f87171;
+  --red-bg: #3a1a1a;
+  --yellow: #fbbf24;
+  --yellow-bg: #3a2a10;
   --radius: 10px;
   --radius-sm: 6px;
   --radius-lg: 14px;
@@ -35,6 +35,12 @@
   --transition: .2s ease;
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+.model-card-active { border-color: var(--accent) !important; background: color-mix(in srgb, var(--accent) 5%, var(--card-bg, var(--surface))) !important; }
+.model-card-inactive { opacity: 0.65; }
+.model-card-inactive select:disabled { opacity: 0.5; cursor: not-allowed; }
+.tag-active { background: var(--accent); color: #000; font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 700; }
+.tag-standby { background: var(--surface-2); color: var(--text-3); font-size: 10px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); }
+.badge-free { background: #10b981; color: #fff; font-size: 10px; padding: 3px 8px; border-radius: 6px; font-weight: 700; letter-spacing: 0.3px; }
 html { font-size: 14px; }
 body {
   font-family: var(--font);
@@ -55,6 +61,10 @@ body {
   display: flex; flex-direction: column; z-index: 100; overflow-y: auto;
   transition: transform var(--transition);
 }
+.nav-item i { width: 18px; height: 18px; flex-shrink: 0; }
+.section-title i { width: 20px; height: 20px; flex-shrink: 0; }
+.empty-state .empty-icon i { width: 48px; height: 48px; stroke-width: 1.5; }
+.toast-icon i { width: 18px; height: 18px; }
 .sidebar-logo {
   padding: 16px 20px; font-size: 18px; font-weight: 700;
   border-bottom: 1px solid var(--border);
@@ -62,11 +72,11 @@ body {
 }
 .sidebar-logo .logo-icon {
   width: 32px; height: 32px; border-radius: 8px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  background: #ffffff; color: #000000;
   display: flex; align-items: center; justify-content: center;
   font-size: 16px; font-weight: 800; color: #0b1120;
 }
-.sidebar-logo span { color: var(--accent); }
+.sidebar-logo span { color: #ffffff; }
 .sidebar-nav { flex: 1; padding: 8px; }
 .nav-item {
   display: flex; align-items: center; gap: 10px;
@@ -75,9 +85,9 @@ body {
   font-size: 13px; font-weight: 500; border: none; background: none; width: 100%;
   text-align: left;
 }
-.nav-item:hover { background: var(--surface-2); color: var(--text); }
-.nav-item.active { background: var(--surface-3); color: var(--accent); }
-.nav-item .icon { font-size: 16px; width: 24px; text-align: center; }
+.nav-item:hover { background: #1a1a1a; color: #ffffff; }
+.nav-item.active { background: #1a1a1a; color: #ffffff; }
+
 .sidebar-footer {
   padding: 12px; border-top: 1px solid var(--border);
 }
@@ -134,6 +144,27 @@ body {
 /* ============ CARDS ============ */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; }
 
+
+.grid-auto { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+@media (max-width: 600px) { .grid-auto { grid-template-columns: 1fr; } }
+.model-select-wrap { position: relative; }
+.model-select-wrap select {
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 10px 36px 10px 12px; border-radius: var(--radius-sm); font-size: 13px;
+  font-family: var(--font); width: 100%; cursor: pointer; transition: border-color var(--transition);
+  font-weight: 500;
+}
+.model-select-wrap select:focus { outline: none; border-color: var(--accent); }
+.model-select-wrap::after {
+  content: ''; position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  width: 0; height: 0; border-left: 5px solid transparent;
+  border-right: 5px solid transparent; border-top: 5px solid var(--text-2);
+  pointer-events: none;
+}
+.model-select-wrap select:disabled { opacity: 0.4; cursor: not-allowed; }
+.model-select-wrap select:disabled ~ .model-select-arrow { opacity: 0.3; }
+
 /* ============ TABLES ============ */
 .table-wrap { overflow-x: auto; border-radius: var(--radius-lg); border: 1px solid var(--border); }
 table { width: 100%; border-collapse: collapse; }
@@ -162,8 +193,8 @@ label { font-size: 12px; color: var(--text-2); font-weight: 500; display: block;
   font-size: 13px; font-weight: 600; transition: all var(--transition);
   text-decoration: none; line-height: 1.4;
 }
-.btn-primary { background: var(--accent-2); color: #0b1120; }
-.btn-primary:hover { background: var(--accent); }
+.btn-primary { background: #ffffff; color: #000000; }
+.btn-primary:hover { background: #e0e0e0; }
 .btn-ghost { background: transparent; color: var(--text-2); border: 1px solid var(--border); }
 .btn-ghost:hover { background: var(--surface-2); color: var(--text); }
 .btn-danger { background: var(--red); color: white; }
@@ -184,7 +215,7 @@ label { font-size: 12px; color: var(--text-2); font-weight: 500; display: block;
   content: ''; position: absolute; width: 16px; height: 16px; left: 3px; bottom: 3px;
   background: var(--text); border-radius: 50%; transition: var(--transition);
 }
-.toggle input:checked + .slider { background: var(--accent-2); }
+.toggle input:checked + .slider { background: #ffffff; }
 .toggle input:checked + .slider::before { transform: translateX(18px); }
 
 /* ============ LOADING ============ */
@@ -200,6 +231,9 @@ label { font-size: 12px; color: var(--text-2); font-weight: 500; display: block;
 .skel-table { height: 200px; }
 
 /* ============ TOAST ============ */
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }
+
 .toast-container {
   position: fixed; bottom: 20px; right: 20px; z-index: 9999;
   display: flex; flex-direction: column; gap: 8px; max-width: 360px;
@@ -271,7 +305,7 @@ label { font-size: 12px; color: var(--text-2); font-weight: 500; display: block;
 .mt-4 { margin-top: 16px; }
 .text-muted { color: var(--text-2); }
 .text-subtle { color: var(--text-3); }
-.text-accent { color: var(--accent); }
+.text-accent { color: #ffffff; }
 .text-green { color: var(--green); }
 .text-red { color: var(--red); }
 .text-sm { font-size: 12px; }
@@ -282,7 +316,7 @@ label { font-size: 12px; color: var(--text-2); font-weight: 500; display: block;
 .w-full { width: 100%; }
 .tag {
   display: inline-block; padding: 2px 8px; border-radius: 999px;
-  font-size: 11px; background: var(--surface-2); color: var(--text-2);
+  font-size: 11px; background: #1a1a1a; color: #cccccc;
   margin: 2px;
 }
 
@@ -298,31 +332,51 @@ label { font-size: 12px; color: var(--text-2); font-weight: 500; display: block;
   padding: 16px; transition: border-color var(--transition);
 }
 .persona-card:hover { border-color: var(--border-light); }
-.persona-name { font-weight: 600; color: var(--accent); margin-bottom: 4px; font-size: 14px; }
+.persona-name { font-weight: 600; color: #ffffff; margin-bottom: 4px; font-size: 14px; }
 .persona-preview { font-size: 12px; color: var(--text-3); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.progress-bar {
+  width: 100%; height: 6px; background: #1a1a1a; border-radius: 3px; overflow: hidden; margin-top: 4px;
+}
+.progress-bar .fill {
+  height: 100%; border-radius: 3px; transition: width .5s ease;
+}
+.fill-green { background: var(--green); }
+.fill-blue { background: #ffffff; }
+.fill-yellow { background: var(--yellow); }
+.sys-stat { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+.chart-container { position: relative; height: 180px; width: 100%; margin-top: 8px; }
+.chart-wrap {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 16px; margin-bottom: 16px;
+}
+.chart-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; color: var(--text-2); }
+.stats-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
+@media (max-width: 600px) { .stats-row { grid-template-columns: 1fr; } }
 </style>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
 <div class="app" id="app">
   <!-- Sidebar -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-logo">
-      <div class="logo-icon">B</div>
+      <div class="logo-icon"><i data-lucide="bot" width="24" height="24" stroke-width="2"></i></div>
       <div><span>Bot</span>-WA</div>
     </div>
     <nav class="sidebar-nav" id="nav">
-      <button class="nav-item active" data-tab="overview"><span class="icon">📊</span> Overview</button>
-      <button class="nav-item" data-tab="keys"><span class="icon">🔑</span> API Keys</button>
-      <button class="nav-item" data-tab="model"><span class="icon">🧠</span> Model</button>
-      <button class="nav-item" data-tab="skills"><span class="icon">🧩</span> Skills</button>
-      <button class="nav-item" data-tab="whitelist"><span class="icon">👤</span> Whitelist</button>
-      <button class="nav-item" data-tab="persona"><span class="icon">🎭</span> Persona</button>
-      <button class="nav-item" data-tab="profiles"><span class="icon">📋</span> Profiles</button>
-      <button class="nav-item" data-tab="settings"><span class="icon">⚙️</span> Settings</button>
+      <button class="nav-item active" data-tab="overview"><i data-lucide="layout-dashboard" width="18" height="18"></i>Overview</button>
+      <button class="nav-item" data-tab="keys"><i data-lucide="key-round" width="18" height="18"></i>API Keys</button>
+      <button class="nav-item" data-tab="model"><i data-lucide="brain-circuit" width="18" height="18"></i>Model</button>
+      <button class="nav-item" data-tab="skills"><i data-lucide="blocks" width="18" height="18"></i>Skills</button>
+      <button class="nav-item" data-tab="whitelist"><i data-lucide="users" width="18" height="18"></i>Whitelist</button>
+      <button class="nav-item" data-tab="persona"><i data-lucide="user-cog" width="18" height="18"></i>Persona</button>
+      <button class="nav-item" data-tab="profiles"><i data-lucide="file-text" width="18" height="18"></i>Profiles</button>
+      <button class="nav-item" data-tab="stock"><i data-lucide="archive" width="18" height="18"></i>Stock</button>
+      <button class="nav-item" data-tab="settings"><i data-lucide="settings" width="18" height="18"></i>Settings</button>
     </nav>
     <div class="sidebar-footer">
-      <button class="nav-item" id="btnReconnect"><span class="icon">🔄</span> Reconnect Bot</button>
-      <button class="nav-item" onclick="showChangePw()"><span class="icon">🔒</span> Change Password</button>
+      <button class="nav-item" onclick="showChangePw()"><i data-lucide="lock" width="18" height="18"></i>Change Password</button>
     </div>
   </aside>
 
@@ -373,7 +427,7 @@ label { font-size: 12px; color: var(--text-2); font-weight: 500; display: block;
 <div id="changePwModal" style="display:none">
   <div class="modal-overlay">
     <div class="modal">
-      <div class="modal-header"><div class="modal-title">🔒 Ganti Password</div><button class="modal-close" onclick="closeChangePw()">✕</button></div>
+      <div class="modal-header"><div class="modal-title"><i data-lucide="lock" width="18" height="18"></i> Ganti Password</div><button class="modal-close" onclick="closeChangePw()">✕</button></div>
       <div class="form-group"><label>Password saat ini</label><input type="password" id="cp-old" placeholder="Password lama"></div>
       <div class="form-group"><label>Password baru</label><input type="password" id="cp-new" placeholder="Minimal 4 karakter"></div>
       <div class="form-group"><label>Konfirmasi password baru</label><input type="password" id="cp-confirm" placeholder="Ulangi password baru" onkeydown="if(event.key==='Enter') doChangePassword()"></div>
@@ -403,11 +457,11 @@ function setToken(t) { authToken = t; t ? localStorage.setItem('bot_wa_token', t
 
 // ==================== TOAST SYSTEM ====================
 function toast(msg, type = 'info', duration = 4000) {
-  const icons = { success: '✅', error: '❌', info: 'ℹ️', warning: '⚠️' };
+  const icons = { success: 'check-circle', error: 'x-circle', info: 'info', warning: 'triangle-alert' };
   const container = document.getElementById('toasts');
   const el = document.createElement('div');
   el.className = `toast toast-${type}`;
-  el.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ️'}</span><div class="toast-body">${msg}</div><button class="toast-close" onclick="this.parentElement.remove()">✕</button>`;
+  el.innerHTML = `<span class="toast-icon"><i data-lucide="${icons[type] || 'info'}" width="18" height="18"></i></span><div class="toast-body">${msg}</div><button class="toast-close" onclick="this.parentElement.remove()">✕</button>`;
   container.appendChild(el);
   setTimeout(() => { if (el.parentElement) el.remove(); }, duration);
 }
@@ -431,7 +485,7 @@ function loadingSkeleton(type = 'table') {
 }
 
 function emptyState(icon, text) {
-  return `<div class="empty-state"><div class="empty-icon">${icon}</div><p>${text}</p></div>`;
+  return `<div class="empty-state"><div class="empty-icon"><i data-lucide="${icon}" width="48" height="48" stroke-width="1.5"></i></div><p>${text}</p></div>`;
 }
 
 // ==================== AUTH ====================
@@ -457,8 +511,11 @@ function doLogin() {
       document.getElementById('loginError').style.display = 'block';
     }
   }).catch(() => { document.getElementById('loginError').textContent = 'Gagal terhubung ke server'; document.getElementById('loginError').style.display = 'block'; })
-  .finally(() => { btn.disabled = false; btn.textContent = 'Masuk'; });
+  .finally(() => { btn.disabled = false; btn.textContent = 'Masuk';
+    setTimeout(() => lucide.createIcons(), 200); });
 }
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
 function showChangePw() {
   document.getElementById('cp-old').value = '';
@@ -508,6 +565,7 @@ document.getElementById('menuBtn').addEventListener('click', () => {
 async function renderTab(tab) {
   const el = document.getElementById('tabContent');
   el.innerHTML = loadingSkeleton();
+  if (tab !== 'overview') document.getElementById('statsGrid').innerHTML = '';
   try {
     switch (tab) {
       case 'overview': await renderOverview(); break;
@@ -517,20 +575,23 @@ async function renderTab(tab) {
       case 'whitelist': await renderWhitelist(); break;
       case 'persona': await renderPersona(); break;
       case 'profiles': await renderProfiles(); break;
+      case 'stock': await renderStock(); break;
       case 'settings': await renderSettings(); break;
     }
   } catch (e) {
-    el.innerHTML = emptyState('⚠️', 'Error loading tab: ' + e.message);
+    el.innerHTML = emptyState('alert-circle', 'Error: ' + e.message);
   }
 }
 
 // ==================== OVERVIEW TAB ====================
 async function renderOverview() {
+  document.getElementById('tabContent').innerHTML = '';
   const [status, tokens] = await Promise.all([api('/api/status'), api('/api/tokens')]);
   if (!status) return;
   const fmt = n => n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : n;
   const h = Math.floor((status.uptime||0) / 3600);
   const m = Math.floor(((status.uptime||0) % 3600) / 60);
+  const firstStart = status.firstStart ? new Date(parseInt(status.firstStart)).toLocaleString('id-ID') : '-';
   document.getElementById('statsGrid').innerHTML = `
     <div class="stat-card"><div class="stat-label">Status Bot</div>
       <div class="stat-value ${status.connected ? 'text-green' : 'text-red'}">${status.connected ? '● Aktif' : '○ Mati'}</div>
@@ -538,12 +599,24 @@ async function renderOverview() {
     <div class="stat-card"><div class="stat-label">Uptime</div>
       <div class="stat-value">${h}<span style="font-size:14px">j</span> ${m}<span style="font-size:14px">m</span></div>
       <div class="stat-sub">Bot berjalan</div></div>
-    <div class="stat-card"><div class="stat-label">Pesan Diproses</div>
+    <div class="stat-card"><div class="stat-label">Pesan Sesi</div>
       <div class="stat-value text-accent">${fmt(status.messageCount||0)}</div>
       <div class="stat-sub">Sejak start</div></div>
-    <div class="stat-card"><div class="stat-label">Skills Aktif</div>
-      <div class="stat-value text-accent">${status.skillsCount||0}</div>
-      <div class="stat-sub">Terinstall</div></div>
+    <div class="stat-card"><div class="stat-label">Total Pesan</div>
+      <div class="stat-value">${fmt(status.totalMessages||0)}</div>
+      <div class="stat-sub">Seumur hidup</div></div>
+    <div class="stat-card"><div class="stat-label">Restart</div>
+      <div class="stat-value">${status.restartCount||0}</div>
+      <div class="stat-sub">Total restart</div></div>
+    <div class="stat-card"><div class="stat-label">Video Dibuat</div>
+      <div class="stat-value text-accent">${status.videosGenerated||0}</div>
+      <div class="stat-sub">Total video</div></div>
+    <div class="stat-card"><div class="stat-label">Online Sejak</div>
+      <div class="stat-value text-sm text-accent">${firstStart}</div>
+      <div class="stat-sub">Pertama kali jalan</div></div>
+    <div class="stat-card"><div class="stat-label">Skills</div>
+      <div class="stat-value">${status.skillsCount||0}</div>
+      <div class="stat-sub">Aktif</div></div>
     <div class="stat-card"><div class="stat-label">Whitelist</div>
       <div class="stat-value">${status.whitelistCount||0}</div>
       <div class="stat-sub">User diizinkan</div></div>
@@ -551,119 +624,290 @@ async function renderOverview() {
       <div class="stat-value text-accent">${fmt(tokens?.totalAll||0)}</div>
       <div class="stat-sub">${tokens?.count||0} calls</div></div>`;
 
-  document.getElementById('tabContent').innerHTML = ''; // Overview is just stats
+    // ==================== SYSTEM STATS ====================
+  const sys = await api('/api/system');
+  if (sys) {
+    const memTotal = (sys.memory.total / 1024 / 1024 / 1024).toFixed(1);
+    const memUsed = (sys.memory.used / 1024 / 1024 / 1024).toFixed(1);
+    const memFree = (sys.memory.free / 1024 / 1024 / 1024).toFixed(1);
+    const memPct = Math.round((sys.memory.used / sys.memory.total) * 100);
+    const cpuPct = sys.cpu.usage;
+    const diskFree = sys.disk.free || '-';
+    const diskTotal = sys.disk.total || '-';
+    const diskPct = parseInt(sys.disk.usage) || 0;
+    const sysUptime = Math.floor(sys.uptime / 3600) + 'j ' + Math.floor((sys.uptime % 3600) / 60) + 'm';
+
+    document.getElementById('statsGrid').insertAdjacentHTML('beforeend', `
+      <div class="stat-card"><div class="stat-label">CPU</div>
+        <div class="stat-value text-sm">${cpuPct}%</div>
+        <div class="progress-bar"><div class="fill fill-blue" style="width:${cpuPct}%"></div></div>
+        <div class="sys-stat">${sys.cpu.cores} core · load ${sys.cpu.load[0].toFixed(2)}</div></div>
+      <div class="stat-card"><div class="stat-label">RAM</div>
+        <div class="stat-value text-sm">${memUsed}GB / ${memTotal}GB</div>
+        <div class="progress-bar"><div class="fill fill-green" style="width:${memPct}%"></div></div>
+        <div class="sys-stat">${memFree}GB free · ${memPct}% used</div></div>
+      <div class="stat-card"><div class="stat-label">Disk</div>
+        <div class="stat-value text-sm">${diskFree} / ${diskTotal}</div>
+        <div class="progress-bar"><div class="fill fill-yellow" style="width:${diskPct}%"></div></div>
+        <div class="sys-stat">${diskPct}% used</div></div>
+      <div class="stat-card"><div class="stat-label">System Uptime</div>
+        <div class="stat-value text-sm">${sysUptime}</div>
+        <div class="sys-stat">${sys.hostname} · ${sys.platform}</div></div>
+    `);
+
+    const tokenTotal = tokens?.totalAll || 0;
+    const tokenCount = tokens?.count || 0;
+
+    // Charts
+    document.getElementById('tabContent').innerHTML = `
+      <div class="stats-row">
+        <div class="chart-wrap">
+          <div class="chart-title">API Usage</div>
+          <div class="chart-container" style="height:130px">
+            <canvas id="chartTokens"></canvas>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <div class="chart-title">Memory Usage</div>
+          <div class="chart-container"><canvas id="chartMem"></canvas></div>
+        </div>
+      </div>
+    `;
+
+    // Extract sys data into local vars safe for closure
+    try {
+      var mUsed = memUsed;
+      var mFree = memFree;
+      var mPct = memPct;
+      var tTotal = tokenTotal;
+      var tCount = tokenCount;
+    } catch(e) { /* fallback */ }
+
+    // Token bar chart
+    var tokCanvas = document.getElementById('chartTokens');
+    if (tokCanvas) {
+      var avgCall = tCount > 0 ? Math.round(tTotal / tCount) : 0;
+      new Chart(tokCanvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels: ['Total Calls', 'Avg Tokens/Call'],
+          datasets: [{
+            data: [tCount, avgCall],
+            backgroundColor: ['#ffffff', '#666666'],
+            borderRadius: 4,
+            borderSkipped: false,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          indexAxis: 'y',
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) {
+                  var val = ctx.raw;
+                  return ctx.label + ': ' + (val >= 1000 ? (val/1000).toFixed(1) + 'K' : val);
+                }
+              }
+            }
+          },
+          scales: {
+            x: { grid: { color: '#2a2a2a' }, ticks: { color: '#999' } },
+            y: { grid: { display: false }, ticks: { color: '#ccc' } }
+          }
+        }
+      });
+    }
+
+    // Memory donut
+    var memCanvas = document.getElementById('chartMem');
+    if (memCanvas) {
+      new Chart(memCanvas.getContext('2d'), {
+        type: 'doughnut',
+        data: {
+          labels: ['Used', 'Free'],
+          datasets: [{
+            data: [mPct, 100 - mPct],
+            backgroundColor: ['#4ade80', '#1a1a1a'],
+            borderWidth: 0,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          cutout: '70%',
+          plugins: {
+            legend: { display: true, position: 'bottom', labels: { color: '#ccc', padding: 12 } },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) {
+                  return ctx.label + ': ' + (ctx.label === 'Used' ? mUsed + 'GB' : mFree + 'GB');
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+  }
+
+  // tabContent filled by charts above
+  setTimeout(() => lucide.createIcons(), 100);
 }
 
 // ==================== API KEYS TAB ====================
 async function renderApiKeys() {
   const keys = await api('/api/keys');
-  if (!keys || !keys.length) { document.getElementById('tabContent').innerHTML = emptyState('🔑', 'Tidak ada API key'); return; }
+  if (!keys || !keys.length) { document.getElementById('tabContent').innerHTML = emptyState('key-round', 'Tidak ada API key'); return; }
 
-  let html = `<div class="section-header"><div class="section-title">🔑 API Keys</div></div>
-  <div style="display:grid;gap:12px">`;
+  let html = '<div class="section-header"><div class="section-title"><i data-lucide="key-round" width="20" height="20"></i>API Keys</div></div><div style="display:grid;gap:10px">';
 
   for (const k of keys) {
-    const id = 'key-' + k.key;
-    html += `<div class="card" id="${id}">
-      <div class="flex items-center justify-between mb-2">
-        <div><strong>${k.label}</strong><br><span class="text-subtle text-xs">${k.key}</span></div>
-        <div class="flex gap-2">
-          <button class="btn btn-sm btn-ghost" onclick="testKey('${k.key}')" id="test-${k.key}">Test</button>
-          <a href="${k.docs}" target="_blank" class="btn btn-sm btn-ghost" style="text-decoration:none">📄</a>
-        </div>
-      </div>
-      <div class="api-key-display mb-2">
-        <span id="val-${k.key}" style="flex:1">${k.isSet ? k.masked : '<span class="text-subtle">Belum diset</span>'}</span>
-        ${k.isSet ? `<button class="btn btn-xs btn-ghost" onclick="toggleKeyVisibility('${k.key}')">👁</button>` : ''}
-      </div>
-      <div class="form-row">
-        <input type="password" id="input-${k.key}" placeholder="API key baru..." value="">
-        <button class="btn btn-primary btn-sm" onclick="saveKey('${k.key}')">Simpan</button>
-      </div>
-      <div id="status-${k.key}" class="text-xs mt-2" style="color:var(--text-3)"></div>
-    </div>`;
+    const val = k.isSet ? k.masked : '<span class="text-subtle">\u2014</span>';
+    const eyeBtn = k.isSet ? '<button class="btn btn-xs btn-ghost" onclick="toggleKeyVisibility(\'' + k.key + '\')" style="padding:1px 6px;font-size:10px" title="Tampilkan"><i data-lucide="eye" width="12" height="12"></i></button>' : '';
+    html += '<div class="card" id="key-' + k.key + '" style="padding:12px 14px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
+        '<div style="font-weight:600;font-size:14px">' + k.label + '</div>' +
+        '<div style="display:flex;gap:4px">' +
+          '<button class="btn btn-sm btn-ghost" onclick="testKey(\'' + k.key + '\')" id="test-' + k.key + '" style="padding:3px 8px;font-size:11px">Test</button>' +
+          '<a href="' + k.docs + '" target="_blank" class="btn btn-sm btn-ghost" style="text-decoration:none;padding:3px 8px"><i data-lucide="external-link" width="12" height="12"></i></a>' +
+        '</div>' +
+      '</div>' +
+      '<div style="font-family:var(--mono);font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:6px;margin-bottom:6px;background:var(--bg);padding:4px 8px;border-radius:6px">' +
+        '<span style="color:var(--text-3)">' + k.key + '</span>' +
+        '<span style="color:var(--text-3)">\u2022</span>' +
+        '<span id="val-' + k.key + '" style="flex:1">' + val + '</span>' +
+        eyeBtn +
+      '</div>' +
+      '<div style="display:flex;gap:6px">' +
+        '<input type="password" id="input-' + k.key + '" placeholder="API key baru..." value="" style="flex:1;padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">' +
+        '<button class="btn btn-primary" onclick="saveKey(\'' + k.key + '\')" style="padding:3px 10px;font-size:12px;white-space:nowrap">Simpan</button>' +
+      '</div>' +
+      '<div id="status-' + k.key + '" class="text-xs" style="color:var(--text-3);margin-top:4px;min-height:0;line-height:1.2"></div>' +
+    '</div>';
   }
 
-  html += `</div>`;
+  html += '</div>';
   document.getElementById('tabContent').innerHTML = html;
+  setTimeout(() => lucide.createIcons(), 50);
 }
 
 async function saveKey(key) {
-  const val = document.getElementById('input-' + key).value.trim();
-  if (!val) { toast('Masukkan API key', 'warning'); return; }
-  const btn = document.querySelector(`#key-${key} .btn-primary`);
-  btn.disabled = true; btn.textContent = 'Menyimpan...';
-  const res = await api('/api/keys', { method: 'PUT', body: JSON.stringify({ key, value: val }) });
-  btn.disabled = false; btn.textContent = 'Simpan';
+  const val = document.getElementById("input-" + key).value.trim();
+  if (!val) { toast("Masukkan API key", "warning"); return; }
+  const btn = document.querySelector("#key-" + key + " .btn-primary");
+  if (btn) { btn.disabled = true; btn.textContent = "Menyimpan..."; }
+  const res = await api("/api/keys", { method: "PUT", body: JSON.stringify({ key, value: val }) });
+  if (btn) { btn.disabled = false; btn.textContent = "Simpan"; }
   if (res && res.success) {
-    toast(`${res.provider} API key tersimpan!`, 'success');
+    toast((res.provider || "") + " API key tersimpan!", "success");
     renderApiKeys();
   } else {
-    toast(res?.error || 'Gagal menyimpan', 'error');
+    toast(res?.error || "Gagal menyimpan", "error");
   }
 }
 
 async function testKey(key) {
-  const btn = document.getElementById('test-' + key);
-  const status = document.getElementById('status-' + key);
-  btn.disabled = true; btn.textContent = 'Testing...'; status.textContent = '⏳ Mengecek...';
-  const res = await api('/api/keys/test', { method: 'POST', body: JSON.stringify({ key }) });
-  btn.disabled = false; btn.textContent = 'Test';
+  const btn = document.getElementById("test-" + key);
+  const status = document.getElementById("status-" + key);
+  if (btn) { btn.disabled = true; btn.textContent = "Testing..."; }
+  if (status) { status.innerHTML = "<i data-lucide=\"loader\" width=\"14\" height=\"14\" class=\"spin\"></i> Mengecek..."; }
+  const res = await api("/api/keys/test", { method: "POST", body: JSON.stringify({ key }) });
+  if (btn) { btn.disabled = false; btn.textContent = "Test"; }
   if (res && res.success) {
-    status.textContent = res.message;
-    status.style.color = 'var(--green)';
-    toast(res.message, 'success');
+    if (status) { status.textContent = res.message; status.style.color = "var(--green)"; }
+    toast(res.message, "success");
   } else {
-    status.textContent = '❌ ' + (res?.error || 'Gagal');
-    status.style.color = 'var(--red)';
-    toast(res?.error || 'Test gagal', 'error');
+    if (status) { status.textContent = "\u2717 " + (res?.error || "Gagal"); status.style.color = "var(--red)"; }
+    toast(res?.error || "Test gagal", "error");
   }
 }
 
 function toggleKeyVisibility(key) {
-  const el = document.getElementById('val-' + key);
+  const el = document.getElementById("val-" + key);
+  if (!el) return;
   if (!el.dataset.real) {
-    // Fetch actual key
-    api('/api/keys').then(keys => {
-      const k = keys.find(x => x.key === key);
-      if (!k || !k.isSet) return;
-      // We need the real key. Use settings endpoint.
-      api('/api/settings').then(all => {
-        const real = all[key];
-        if (real) {
-          el.dataset.real = real;
-          el.textContent = real;
-        }
-      });
+    api("/api/settings").then(all => {
+      const real = all[key];
+      if (real) {
+        el.dataset.real = real;
+        el.textContent = real;
+      }
     });
   } else {
-    // Hide again - we don't have the masked value handy
     renderApiKeys();
   }
 }
 
 // ==================== MODEL TAB ====================
 async function renderModel() {
-  let html = `<div class="section-header"><div class="section-title">🧠 Model AI</div>
-    <button class="btn btn-sm btn-ghost" onclick="refreshModels()">🔄 Refresh</button></div>`;
+  let html = `<div class="section-header"><div class="section-title"><i data-lucide="brain-circuit" width="20" height="20"></i>Model AI</div>
+    <button class="btn btn-sm btn-ghost" onclick="refreshModels()"><i data-lucide="refresh-cw" width="14" height="14"></i> Refresh</button></div>`;
 
   const data = await api('/api/models');
   const current = data?.current || '';
   const models = data?.models || [];
 
+  // Fetch current provider
+  const provData = await api('/api/provider');
+  const currProvider = provData?.provider || 'groq';
+
   html += `<div class="card mb-4">
     <div class="form-group">
-      <label>Default Model</label>
-      <select id="modelSelect" onchange="saveModel(this.value)">
-        <option value="">-- Pilih model --</option>
-        ${models.map(m => `<option value="${m.id}" ${m.id === current ? 'selected' : ''}>${m.id} ${m.owned ? '('+m.owned+')' : ''}</option>`).join('')}
-      </select>
+      <label>AI Provider</label>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="btn btn-sm ${currProvider === 'groq' ? 'btn-primary' : 'btn-ghost'}" id="provGroq" onclick="setProvider('groq')" style="flex:1">
+          <i data-lucide="bot" width="14" height="14"></i> Groq
+        </button>
+        <button class="btn btn-sm ${currProvider === '9router' ? 'btn-primary' : 'btn-ghost'}" id="provRouter" onclick="setProvider('9router')" style="flex:1">
+          <i data-lucide="globe" width="14" height="14"></i> 9Router
+        </button>
+      </div>
+      <div class="text-xs text-subtle mt-1" id="providerStatus">
+        ${currProvider === '9router' ? 'Menggunakan 9Router (gratis). Groq sebagai cadangan.' : 'Menggunakan Groq. 9Router sebagai cadangan.'}
+      </div>
     </div>
-    <div class="text-xs text-subtle" id="modelStatus">${models.length} model tersedia</div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+    <div class="card model-card ${currProvider === 'groq' ? 'model-card-active' : 'model-card-inactive'}">
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+          <span style="width:8px;height:8px;border-radius:50%;background:${currProvider === 'groq' ? 'var(--accent)' : 'var(--subtitle)'}"></span>
+          <span style="font-weight:600;font-size:14px;color:var(--text)">Groq Model</span>
+          ${currProvider === 'groq' ? '<span class="tag tag-active">AKTIF</span>' : '<span class="tag tag-standby">STANDBY</span>'}
+        </label>
+        <div class="model-select-wrap">
+          <select id="modelSelect" onchange="saveModel(this.value)" ${currProvider !== 'groq' ? 'disabled' : ''}>
+            <option value="">-- Pilih model --</option>
+            ${models.map(m => `<option value="${m.id}" ${m.id === current ? 'selected' : ''}>${m.id} ${m.owned ? '('+m.owned+')' : ''}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="flex items-center justify-between">
+        <div class="text-xs text-subtle" id="modelStatus">${models.length} model tersedia</div>
+        ${models.length > 0 ? '<span class="tag tag-active" style="font-size:9px">GROQ</span>' : ''}
+      </div>
+    </div>
+
+    <div class="card model-card ${currProvider === '9router' ? 'model-card-active' : 'model-card-inactive'}">
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+          <span style="width:8px;height:8px;border-radius:50%;background:${currProvider === '9router' ? 'var(--accent)' : 'var(--subtitle)'}"></span>
+          <span style="font-weight:600;font-size:14px;color:var(--text)">9Router Model</span>
+          ${currProvider === '9router' ? '<span class="tag tag-active">AKTIF</span>' : '<span class="tag tag-standby">STANDBY</span>'}
+        </label>
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 0">
+          <code style="font-size:13px;background:var(--bg);padding:6px 10px;border-radius:6px;border:1px solid var(--border);flex:1">🤖 Combo (acak dari semua model)</code>
+          <span class="badge badge-free" style="background:var(--accent);color:var(--bg)">MULTI</span>
+        </div>
+      </div>
+      <div class="text-xs text-subtle">Tiap chat pake model acak dari 9Router, fallback ke Groq jika gagal</div>
+    </div>
   </div>`;
 
   html += `<div class="card">
-    <div class="section-title" style="font-size:14px;margin-bottom:8px">📋 Fallback Models</div>
+    <div class="section-title" style="font-size:14px;margin-bottom:8px"><i data-lucide="cpu" width="18" height="18"></i>Fallback Models</div>
     <div class="text-sm text-subtle mb-2">Model cadangan jika model utama kena rate limit</div>
     <div style="display:flex;flex-wrap:wrap;gap:4px">
       ${models.slice(0,8).map(m => `<span class="tag">${m.id.split('-')[0]}</span>`).join('')}
@@ -674,14 +918,28 @@ async function renderModel() {
 }
 
 async function refreshModels() {
-  document.getElementById('modelStatus').textContent = '⏳ Mendeteksi...';
+  document.getElementById('modelStatus').innerHTML = '<i data-lucide="loader" width="14" height="14" class="spin"></i> Mendeteksi...';
   const data = await api('/api/models/refresh', { method: 'POST' });
   if (data && data.success) {
     renderModel();
     toast(`${data.models.length} model terdeteksi!`, 'success');
   } else {
-    document.getElementById('modelStatus').textContent = '❌ Gagal. Cek API key Groq.';
+    document.getElementById('modelStatus').textContent = '✗ Gagal. Cek API key Groq.';
     toast('Gagal mendeteksi model', 'error');
+  }
+}
+
+async function setProvider(provider) {
+  document.getElementById('provGroq').className = 'btn btn-sm ' + (provider === 'groq' ? 'btn-primary' : 'btn-ghost');
+  document.getElementById('provRouter').className = 'btn btn-sm ' + (provider === '9router' ? 'btn-primary' : 'btn-ghost');
+  document.getElementById('providerStatus').textContent = provider === '9router'
+    ? 'Menggunakan 9Router (gratis). Groq sebagai cadangan.'
+    : 'Menggunakan Groq. 9Router sebagai cadangan.';
+  const res = await api('/api/provider', { method: 'POST', body: JSON.stringify({ provider }) });
+  if (res && res.success) {
+    toast('AI Provider: ' + provider, 'success');
+  } else {
+    toast('Gagal ganti provider', 'error');
   }
 }
 
@@ -694,22 +952,28 @@ async function saveModel(modelId) {
 // ==================== SKILLS TAB ====================
 async function renderSkills() {
   const skills = await api('/api/skills');
-  if (!skills || !skills.length) { document.getElementById('tabContent').innerHTML = emptyState('🧩', 'Belum ada skill'); return; }
+  if (!skills || !skills.length) { document.getElementById('tabContent').innerHTML = emptyState('blocks', 'Belum ada skill'); return; }
 
-  let html = `<div class="section-header"><div class="section-title">🧩 Skills</div>
+  let html = `<div class="section-header"><div class="section-title"><i data-lucide="blocks" width="20" height="20"></i>Skills</div>
     <div class="text-xs text-subtle">${skills.length} terinstall</div></div>
-  <div class="table-wrap"><table><thead><tr><th>Skill</th><th>Commands</th><th>Status</th><th>Aksi</th></tr></thead><tbody>`;
+  <div class="grid-auto">`;
 
   for (const s of skills) {
-    html += `<tr>
-      <td><strong>${s.title || s.name}</strong><br><span class="text-subtle text-xs">${s.description || ''}</span></td>
-      <td>${(s.commands || []).map(c => `<span class="tag">/${c}</span>`).join(' ') || '<span class="text-subtle">-</span>'}</td>
-      <td><label class="toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''} data-name="${s.name}" onchange="toggleSkill(this)"><span class="slider"></span></label></td>
-      <td>${s.has_config ? `<button class="btn btn-xs btn-ghost" onclick="showSkillConfig('${s.name}')">Config</button>` : '<span class="text-subtle">-</span>'}</td>
-    </tr>`;
+    const desc = s.description ? s.description.substring(0, 80) : '';
+    html += `<div class="card" style="padding:14px 16px">
+      <div class="flex items-center justify-between mb-2">
+        <div style="font-weight:600;font-size:14px">${s.title || s.name}</div>
+        <label class="toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''} data-name="${s.name}" onchange="toggleSkill(this)"><span class="slider"></span></label>
+      </div>`
+      + (desc ? `<div class="text-xs text-subtle mb-2">${desc}</div>` : '') +
+      `<div class="flex items-center justify-between" style="margin-top:8px">
+        <div>${(s.commands || []).map(c => `<span class="tag">/${c}</span>`).join(' ') || '<span class="text-subtle text-xs">-</span>'}</div>`
+      + (s.has_config ? `<button class="btn btn-xs btn-ghost" onclick="showSkillConfig('${s.name}')">Config</button>` : '') +
+      `</div>
+    </div>`;
   }
 
-  html += `</tbody></table></div>`;
+  html += '</div>';
   document.getElementById('tabContent').innerHTML = html;
 }
 
@@ -735,7 +999,7 @@ async function showSkillConfig(name) {
 
   const modal = showModal(`
     <div class="modal" onclick="event.stopPropagation()">
-      <div class="modal-header"><div class="modal-title">⚙️ ${name} Config</div><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+      <div class="modal-header"><div class="modal-title"><i data-lucide="sliders" width="18" height="18"></i> Config: ${name}</div><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
       ${body}
     </div>
   `);
@@ -753,25 +1017,26 @@ async function renderWhitelist() {
   const isPrivate = settings?.PRIVATE_MODE === 'true' || settings?.PRIVATE_MODE === true;
   const listArr = list || [];
 
-  let html = `<div class="section-header"><div class="section-title">👤 Whitelist</div>
+  let html = `<div class="section-header"><div class="section-title"><i data-lucide="users" width="20" height="20"></i>Whitelist</div>
     <div class="section-actions">
-      <button class="btn btn-sm btn-ghost" onclick="showAddWhitelist()">+ Tambah</button>
+      <button class="btn btn-sm btn-ghost" onclick="showAddWhitelist()"><i data-lucide="user-plus" width="14" height="14"></i> Tambah</button>
     </div></div>
   <div class="text-xs text-subtle mb-3">${listArr.length} user diizinkan</div>`;
 
   if (!listArr.length) {
-    html += emptyState('👤', 'Belum ada user di whitelist');
+    html += emptyState('user-x', 'Belum ada user di whitelist');
   } else {
-    html += `<div class="table-wrap"><table><thead><tr><th>#</th><th>Nama</th><th>JID</th><th>Aksi</th></tr></thead><tbody>`;
+    html += `<div class="grid-auto">`;
     listArr.forEach((item, i) => {
-      html += `<tr>
-        <td>${i + 1}</td>
-        <td>${item.name || '-'}</td>
-        <td style="font-family:var(--mono);font-size:12px">${item.jid}</td>
-        <td><button class="btn btn-xs btn-danger" onclick="removeWhitelist('${item.jid}')">Hapus</button></td>
-      </tr>`;
+      html += `<div class="card" style="padding:14px 16px">
+        <div class="flex items-center justify-between mb-1">
+          <div style="font-weight:600;font-size:14px">${item.name || 'User ' + (i+1)}</div>
+          <button class="btn btn-xs btn-danger" onclick="removeWhitelist('${item.jid}')">Hapus</button>
+        </div>
+        <div class="text-xs font-mono" style="color:var(--text-3)">${item.jid}</div>
+      </div>`;
     });
-    html += `</tbody></table></div>`;
+    html += `</div>`;
   }
 
   document.getElementById('tabContent').innerHTML = html;
@@ -780,7 +1045,7 @@ async function renderWhitelist() {
 function showAddWhitelist() {
   const modal = showModal(`
     <div class="modal" onclick="event.stopPropagation()">
-      <div class="modal-header"><div class="modal-title">Tambah Whitelist</div><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+      <div class="modal-header"><div class="modal-title"><i data-lucide="user-plus" width="18" height="18"></i> Tambah Whitelist</div><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
       <div class="form-group"><label>Nomor WhatsApp</label><input id="wl-jid" placeholder="628xxx atau 628xxx@s.whatsapp.net" onkeydown="if(event.key==='Enter') document.getElementById('wl-name').focus()"></div>
       <div class="form-group"><label>Nama (opsional)</label><input id="wl-name" placeholder="Nama user" onkeydown="if(event.key==='Enter') doAddWhitelist()"></div>
       <div class="modal-footer"><button class="btn btn-primary" onclick="doAddWhitelist()">Tambah</button><button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Batal</button></div>
@@ -801,7 +1066,7 @@ async function doAddWhitelist() {
 async function removeWhitelist(jid) {
   const modal = showModal(`
     <div class="modal" onclick="event.stopPropagation()" style="max-width:400px">
-      <div class="modal-header"><div class="modal-title">Hapus Whitelist</div></div>
+      <div class="modal-header"><div class="modal-title"><i data-lucide="trash-2" width="18" height="18"></i> Hapus Whitelist</div></div>
       <p class="text-sm mb-4">Yakin ingin menghapus <strong>${jid}</strong>?</p>
       <div class="modal-footer"><button class="btn btn-danger" onclick="confirmRemoveWhitelist('${jid}')">Ya, Hapus</button><button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Batal</button></div>
     </div>
@@ -821,13 +1086,13 @@ async function renderPersona() {
   const defaults = data?.defaults || [];
   const custom = data?.custom || [];
 
-  let html = `<div class="section-header"><div class="section-title">🎭 Persona / Mode</div>
-    <button class="btn btn-sm btn-ghost" onclick="showAddPersona()">+ Buat Baru</button></div>`;
+  let html = `<div class="section-header"><div class="section-title"><i data-lucide="user-cog" width="20" height="20"></i>Persona / Mode</div>
+    <button class="btn btn-sm btn-ghost" onclick="showAddPersona()"><i data-lucide="plus" width="14" height="14"></i> Buat Baru</button></div>`;
 
   // Default modes
   html += `<div class="card mb-4">
     <div class="flex items-center justify-between mb-3">
-      <h4 style="font-size:14px;font-weight:600">📌 Mode Default</h4>
+    <h4 style="font-size:14px;font-weight:600"><i data-lucide="bookmark" width="16" height="16"></i> Mode Default</h4>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:6px">
       ${defaults.map(d => `<span class="tag" style="padding:4px 12px">${d.name}</span>`).join('')}
@@ -853,7 +1118,7 @@ async function renderPersona() {
     }
     html += `</div>`;
   } else {
-    html += emptyState('🎭', 'Belum ada mode kustom. Klik "Buat Baru" untuk membuat persona sendiri.');
+    html += emptyState('smile-plus', 'Belum ada mode kustom.');
   }
 
   document.getElementById('tabContent').innerHTML = html;
@@ -917,7 +1182,7 @@ function showPfError(msg) { const el = document.getElementById('pf-error'); el.t
 async function deletePersona(name) {
   const modal = showModal(`
     <div class="modal" onclick="event.stopPropagation()" style="max-width:400px">
-      <div class="modal-header"><div class="modal-title">Hapus Persona</div></div>
+      <div class="modal-header"><div class="modal-title"><i data-lucide="trash-2" width="18" height="18"></i> Hapus Persona</div></div>
       <p class="text-sm mb-4">Yakin ingin menghapus mode <strong>"${name}"</strong>?</p>
       <div class="modal-footer"><button class="btn btn-danger" onclick="confirmDeletePersona('${name}')">Ya, Hapus</button>
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Batal</button></div>
@@ -937,53 +1202,206 @@ async function renderProfiles() {
   const profiles = await api('/api/profiles');
   const arr = profiles || [];
 
-  let html = `<div class="section-header"><div class="section-title">📋 Profil User</div>
+  let html = `<div class="section-header"><div class="section-title"><i data-lucide="file-text" width="20" height="20"></i>Profil User</div>
     <div class="text-xs text-subtle">${arr.length} user</div></div>
   <p class="text-sm text-subtle mb-4">Fakta yang diingat bot tentang setiap user (diekstrak otomatis dari percakapan)</p>`;
 
   if (!arr.length) {
-    html += emptyState('📋', 'Belum ada profil. Ajak bot ngobrol dulu!');
+    html += emptyState('file-text', 'Belum ada profil.');
   } else {
-    html += `<div class="table-wrap"><table><thead><tr><th>User</th><th>Fakta</th><th>Timezone</th><th>Update</th></tr></thead><tbody>`;
+    html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:14px">`;
     for (const p of arr) {
-      const facts = (p.facts || []).map(f => `<span class="tag">${f}</span>`).join('') || '<span class="text-subtle">-</span>';
+      const facts = (p.facts || []).map(f => esc(f));
       const name = p.name || p.jid?.split('@')[0] || '?';
-      html += `<tr>
-        <td><strong>${name}</strong><br><span class="text-xs text-subtle font-mono">${p.jid || ''}</span></td>
-        <td style="max-width:300px">${facts}</td>
-        <td>${p.timezone || 'Asia/Jakarta'}</td>
-        <td class="text-xs text-subtle">${p.updated_at ? new Date(p.updated_at).toLocaleDateString('id-ID') : '-'}</td>
-      </tr>`;
+      const MAX_FACTS = 8;
+      const visibleFacts = facts.slice(0, MAX_FACTS);
+      const extraCount = facts.length - MAX_FACTS;
+
+      html += `<div class="card" style="padding:20px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px">
+          <div>
+            <div style="font-size:17px;font-weight:700">${esc(name)}</div>
+            <div style="font-size:12px;font-family:var(--mono);color:var(--text-3);margin-top:2px">${p.jid || ''}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:11px;color:var(--text-3)">${p.timezone || 'Asia/Jakarta'}</div>
+            <div style="font-size:11px;color:var(--text-3);margin-top:2px">Update: ${p.updated_at ? new Date(p.updated_at).toLocaleDateString('id-ID') : '-'}</div>
+          </div>
+        </div>`;
+
+      if (facts.length) {
+        html += `<div style="font-size:12px;color:var(--text-2);font-weight:600;margin-bottom:8px">Fakta yang diketahui:</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">`;
+        for (const f of visibleFacts) {
+          html += `<span style="display:inline-block;background:var(--surface-3);padding:4px 10px;border-radius:6px;font-size:12px;color:var(--text);line-height:1.4">${f}</span>`;
+        }
+        if (extraCount > 0) {
+          html += `<span style="display:inline-block;background:var(--surface-2);padding:4px 10px;border-radius:6px;font-size:12px;color:var(--text-3)">+${extraCount} lagi</span>`;
+        }
+        html += `</div>`;
+      } else {
+        html += `<div class="text-xs text-subtle">Belum ada fakta yang tercatat</div>`;
+      }
+
+      html += `</div>`;
     }
-    html += `</tbody></table></div>`;
+    html += `</div>`;
   }
 
   document.getElementById('tabContent').innerHTML = html;
+}
+
+// ==================== STOCK TAB ====================
+async function renderStock() {
+  const data = await api('/api/stock');
+  if (!data) { document.getElementById('tabContent').innerHTML = emptyState('archive', 'Gagal memuat stock'); return; }
+  const stocks = data.stocks || [];
+
+  let html = `<div class="section-header">
+    <div class="section-title"><i data-lucide="archive" width="20" height="20"></i>Stock Content</div>
+    <div class="section-actions">
+      <span style="color:var(--text-3);font-size:13px">${data.total} konten</span>
+    </div>
+  </div>`;
+
+  if (!stocks.length) {
+    html += `<div class="card"><div style="text-align:center;padding:40px;color:var(--text-3)">
+      <p>Belum ada stock content. Konten akan muncul setelah auto-generate berjalan.</p>
+    </div></div>`;
+    document.getElementById('tabContent').innerHTML = html;
+    lucide.createIcons();
+    return;
+  }
+
+  html += `<div class="grid-auto">`;
+
+  for (const s of stocks) {
+    const tags = Array.isArray(s.tags) ? s.tags.slice(0, 4) : [];
+    const size = s.video_size > 0 ? (s.video_size / 1024).toFixed(0) + 'KB' : '-';
+    const created = s.created_at ? new Date(s.created_at).toLocaleDateString('id-ID') : '-';
+    const statusColor = s.status === 'posted' ? 'var(--green)' : s.status === 'scheduled' ? 'var(--yellow)' : 'var(--text-3)';
+
+    html += `<div class="card" style="padding:12px;overflow:hidden">
+      <div style="display:flex;gap:12px">
+        ` + (s.thumbnail_path
+          ? `<img src="/api/stock/${s.id}/thumbnail" style="width:60px;height:80px;object-fit:cover;border-radius:6px;flex-shrink:0;background:var(--surface-2)" onerror="this.style.display='none'">`
+          : `<div style="width:60px;height:80px;background:var(--surface-2);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text-3);flex-shrink:0">No<br>cover</div>`
+        ) +
+        `<div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.topic)}</div>
+          <div style="font-size:11px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:2px 0">${esc(s.caption || '-')}</div>
+          <div style="display:flex;gap:3px;flex-wrap:wrap;margin:4px 0">
+            ` + tags.map(t => `<span style="background:var(--surface-3);padding:1px 6px;border-radius:4px;font-size:10px;color:var(--text-2)">${esc(t)}</span>`).join('') + `
+          </div>
+          <div class="flex items-center justify-between" style="margin-top:4px">
+            <div style="display:flex;gap:6px;align-items:center">
+              <span style="color:${statusColor};font-weight:600;font-size:11px">${s.status}</span>
+              <span style="color:var(--text-3);font-size:11px">${size} &middot; ${created}</span>
+            </div>
+            <div style="display:flex;gap:3px">
+              ` + (s.video_path
+                ? `<button class="btn btn-xs btn-ghost" onclick="downloadVideo(${s.id})" title="Download"><i data-lucide="download" width="12" height="12"></i></button>
+                   <button class="btn btn-xs btn-ghost" onclick="copyCaption(${s.id})" title="Copy Caption"><i data-lucide="clipboard" width="12" height="12"></i></button>
+                   <button class="btn btn-xs btn-ghost" onclick="copyTags(${s.id})" title="Copy Tags"><i data-lucide="hash" width="12" height="12"></i></button>`
+                : '') +
+              `<button class="btn btn-xs btn-danger" onclick="deleteStock(${s.id})" title="Delete"><i data-lucide="trash-2" width="12" height="12"></i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  html += '</div>';
+  document.getElementById('tabContent').innerHTML = html;
+  lucide.createIcons();
+}
+
+// Helper: copy to clipboard
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text);
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+}
+
+async function copyCaption(id) {
+  const r = await api('/api/stock/' + id);
+  if (r && r.caption) {
+    const text = r.caption + (Array.isArray(r.tags) && r.tags.length ? '\n\n' + r.tags.join(' ') : '');
+    copyText(text);
+    toast('Caption + tags copied!', 'success');
+  }
+}
+
+async function copyTags(id) {
+  const r = await api('/api/stock/' + id);
+  if (r && Array.isArray(r.tags)) {
+    copyText(r.tags.join(' '));
+    toast('Tags copied!', 'success');
+  }
+}
+
+async function deleteStock(id) {
+  if (!confirm('Hapus stock ini?')) return;
+  const r = await api('/api/stock/' + id, { method: 'DELETE' });
+  if (r && r.success) {
+    toast('Deleted!', 'info');
+    await renderStock();
+  }
+}
+
+async function downloadVideo(id) {
+  try {
+    const r = await fetch(API + '/api/stock/' + id + '/video', {
+      headers: { 'Authorization': 'Bearer ' + authToken }
+    });
+    if (!r.ok) { toast('Gagal download: ' + r.status, 'error'); return; }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'stock-' + id + '.mp4';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast('Download started!', 'success');
+  } catch (e) {
+    toast('Download error: ' + e.message, 'error');
+  }
 }
 
 // ==================== SETTINGS TAB ====================
 async function renderSettings() {
   const settings = await api('/api/settings');
   const keys = Object.keys(settings || {});
-  if (!keys.length) { document.getElementById('tabContent').innerHTML = emptyState('⚙️', 'Belum ada pengaturan'); return; }
+  if (!keys.length) { document.getElementById('tabContent').innerHTML = emptyState('settings', 'Belum ada pengaturan'); return; }
 
-  let html = `<div class="section-header"><div class="section-title">⚙️ Pengaturan</div>
+  let html = `<div class="section-header"><div class="section-title"><i data-lucide="settings" width="20" height="20"></i>Pengaturan</div>
     <div class="text-xs text-subtle">${keys.length} item</div></div>
-  <div class="table-wrap"><table><thead><tr><th>Key</th><th>Value</th><th>Aksi</th></tr></thead><tbody>`;
+  <div class="grid-auto">`;
 
   for (const k of keys) {
     const isBool = settings[k] === 'true' || settings[k] === 'false';
-    html += `<tr>
-      <td style="font-weight:500;font-family:var(--mono);font-size:12px">${k}</td>
-      <td>${isBool
-        ? `<label class="toggle"><input type="checkbox" ${settings[k] === 'true' ? 'checked' : ''} onchange="saveSetting('${k}', this.checked)"><span class="slider"></span></label>`
-        : `<input type="text" id="set-${k}" value="${settings[k] || ''}" style="max-width:300px" onkeydown="if(event.key==='Enter') saveSetting('${k}')">`
-      }</td>
-      <td>${isBool ? '' : `<button class="btn btn-xs btn-primary" onclick="saveSetting('${k}')">Save</button>`}</td>
-    </tr>`;
+    html += `<div class="card" style="padding:14px 16px">
+      <div style="font-weight:500;font-family:var(--mono);font-size:12px;margin-bottom:8px;color:var(--text-2)">${k}</div>
+      <div class="flex items-center justify-between" style="gap:8px">${
+        isBool
+          ? `<label class="toggle"><input type="checkbox" ${settings[k] === 'true' ? 'checked' : ''} onchange="saveSetting('${k}', this.checked)"><span class="slider"></span></label>`
+          : `<input type="text" id="set-${k}" value="${settings[k] || ''}" style="flex:1" onkeydown="if(event.key==='Enter') saveSetting('${k}')">
+             <button class="btn btn-xs btn-primary" onclick="saveSetting('${k}')">Save</button>`
+      }</div>
+    </div>`;
   }
 
-  html += `</tbody></table></div>`;
+  html += '</div>';
   document.getElementById('tabContent').innerHTML = html;
 }
 
@@ -1011,15 +1429,6 @@ async function updateStatusBar() {
 }
 
 // ==================== RECONNECT ====================
-document.getElementById('btnReconnect').addEventListener('click', async () => {
-  const btn = document.getElementById('btnReconnect');
-  btn.disabled = true; btn.innerHTML = '<span class="icon">⏳</span> Reconnecting...';
-  const r = await api('/api/bot/reconnect', { method: 'POST' });
-  btn.disabled = false; btn.innerHTML = '<span class="icon">🔄</span> Reconnect Bot';
-  if (r?.success) toast('Bot akan reconnect...', 'info');
-  else toast(r?.error || 'Gagal reconnect', 'error');
-});
-
 // ==================== KEYBOARD SHORTCUTS ====================
 document.addEventListener('keydown', e => {
   if (e.ctrlKey && !isNaN(e.key) && e.key >= '1' && e.key <= '8') {
@@ -1040,6 +1449,7 @@ async function init() {
   await updateStatusBar();
   await renderOverview();
   setInterval(updateStatusBar, 10000);
+  setTimeout(() => lucide.createIcons(), 100);
 }
 
 // Auth check on load
@@ -1048,7 +1458,7 @@ async function init() {
     const v = await fetch(API + '/api/auth/verify', {
       headers: { 'Authorization': 'Bearer ' + authToken }
     }).then(r => r.json()).catch(() => ({}));
-    if (v.authenticated) { init(); return; }
+    if (v.authenticated) { lucide.createIcons(); init(); return; }
   }
   showLogin();
 })();

@@ -1,9 +1,8 @@
 import express from 'express';
 import path from 'path';
-import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { getAllSkills, getSkill, setSkillEnabled, getSkillConfig, setSkillConfig, getAllSkillConfigs, getAllWhitelist, addWhitelist, removeWhitelist, getAllSettings, getSetting, setSetting, getTokenUsageSummary, resetTokenUsage, getAllCustomModes, getCustomMode, saveCustomMode, deleteCustomMode, getAllUserProfiles, getUserProfile, saveUserProfile, getStocks, getStockById, createStock, updateStock, deleteStock, getStockCount } from '../services/db.js';
+import { getAllSkills, getSkill, setSkillEnabled, getSkillConfig, setSkillConfig, getAllSkillConfigs, getAllWhitelist, addWhitelist, removeWhitelist, getAllSettings, getSetting, setSetting, getTokenUsageSummary, resetTokenUsage, getAllCustomModes, getCustomMode, saveCustomMode, deleteCustomMode, getAllUserProfiles, getUserProfile, saveUserProfile } from '../services/db.js';
 import { getSkillNames } from '../skills/_loader.js';
 import { reloadAI, fetchAvailableModels, getGroqClient, invalidateModeCache, getModel } from '../services/ai.js';
 import os from 'os';
@@ -15,8 +14,7 @@ const PORT = parseInt(process.env.WEB_PORT || '6789');
 
 const AUTH_TOKEN_KEY = 'dashboard_token';
 const PASSWORD_KEY = 'dashboard_password';
-const INIT_PASSWORD_ENV = process.env.WEB_DASHBOARD_INIT_PASSWORD || '';
-const PUBLIC_STOCK_DOWNLOADS = process.env.PUBLIC_STOCK_DOWNLOADS === 'true';
+const DEFAULT_PASSWORD = '12345678';
 
 function hashPassword(pw) {
     return crypto.createHash('sha256').update(pw).digest('hex');
@@ -35,28 +33,22 @@ function getAuthToken() {
     return token;
 }
 
-function validateBearerToken(req) {
-    const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith('Bearer ')) return false;
-    return auth.slice(7) === getAuthToken();
-}
-
 function requireAuth(req, res, next) {
     const p = req.originalUrl;
     if (p === '/api/auth/login' || p === '/api/auth/verify') {
         return next();
     }
-    // Allow public stock file downloads only when explicitly enabled
-    if (PUBLIC_STOCK_DOWNLOADS && p.match(/^\/api\/stock\/\d+\/(video|thumbnail)$/)) {
-        return next();
-    }
-    if (!validateBearerToken(req)) {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Unauthorized' });
+    }
+    if (auth.slice(7) !== getAuthToken()) {
+        return res.status(401).json({ error: 'Invalid token' });
     }
     next();
 }
 
-let botStatus = { connected: false, startTime: Date.now(), messageCount: 0, totalCumulative: 0, sessionStartTime: Date.now() };
+let botStatus = { connected: false, startTime: Date.now(), messageCount: 0, sessionStartTime: Date.now() };
 let sockRef = null;
 
 function initBotStats() {
@@ -75,11 +67,9 @@ export function setBotStatus(connected) {
 
 export function incrementMessageCount() {
     botStatus.messageCount++;
-    botStatus.totalCumulative++;
-    // Persist every 10 messages
-    if (botStatus.messageCount % 10 === 0) {
+    // Persist every 20 messages
+    if (botStatus.messageCount % 20 === 0) {
         setSetting('stats_total_messages', String(botStatus.messageCount));
-        setSetting('stats_total_cumulative', String(botStatus.totalCumulative));
     }
 }
 
@@ -97,16 +87,10 @@ const KNOWN_API_KEYS = [
 const SENSITIVE_KEYS = ['GROQ_API_KEY', '9ROUTER_API_KEY', 'TAVILY_API_KEY', 'dashboard_token', 'dashboard_password'];
 
 export function startServer() {
-    // Set initial password on first run from env or random fallback
+    // Set default password on first run
     if (!getSetting(PASSWORD_KEY)) {
-        const generatedPassword = crypto.randomBytes(12).toString('base64url');
-        const initialPassword = INIT_PASSWORD_ENV || generatedPassword;
-        setSetting(PASSWORD_KEY, hashPassword(initialPassword));
-        if (INIT_PASSWORD_ENV) {
-            console.log('Dashboard password initialized from WEB_DASHBOARD_INIT_PASSWORD');
-        } else {
-            console.log(`Dashboard initial password (save this): ${initialPassword}`);
-        }
+        setSetting(PASSWORD_KEY, hashPassword(DEFAULT_PASSWORD));
+        console.log('🔑 Dashboard password default: 12345678');
     }
 
     // Init persistent stats
@@ -114,7 +98,6 @@ export function startServer() {
     botStatus.startTime = Date.now();
     botStatus.sessionStartTime = Date.now();
     botStatus.messageCount = parseInt(getSetting('stats_total_messages', '0'));
-    botStatus.totalCumulative = parseInt(getSetting('stats_total_cumulative', '0'));
 
     // Seed env vars to DB so web dashboard can see/manage them
         const envToSeed = ['GROQ_API_KEY', 'GROQ_MODEL', 'TAVILY_API_KEY', '9ROUTER_API_KEY'];
@@ -147,7 +130,7 @@ export function startServer() {
     app.post('/api/auth/login', (req, res) => {
         const { password } = req.body;
         if (!password) return res.status(400).json({ error: 'Password required' });
-        const stored = getSetting(PASSWORD_KEY);
+        const stored = getSetting(PASSWORD_KEY, hashPassword(DEFAULT_PASSWORD));
         if (hashPassword(password) !== stored) {
             return res.status(401).json({ error: 'Password salah' });
         }
@@ -168,7 +151,7 @@ export function startServer() {
         if (!oldPassword || !newPassword) {
             return res.status(400).json({ error: 'oldPassword and newPassword required' });
         }
-        const stored = getSetting(PASSWORD_KEY);
+        const stored = getSetting(PASSWORD_KEY, hashPassword(DEFAULT_PASSWORD));
         if (hashPassword(oldPassword) !== stored) {
             return res.status(401).json({ error: 'Password saat ini salah' });
         }
@@ -192,7 +175,7 @@ export function startServer() {
             firstStart: getSetting('stats_first_start'),
             lastStart: getSetting('stats_last_start'),
             restartCount: parseInt(getSetting('stats_restart_count', '0')),
-            totalMessages: parseInt(getSetting('stats_total_cumulative', '0')) || botStatus.totalCumulative || parseInt(getSetting('stats_total_messages', '0')),
+            totalMessages: parseInt(getSetting('stats_total_messages', '0')),
             videosGenerated: parseInt(getSetting('stats_videos_generated', '0')),
             tokenUsage: {
                 total: tokenUsage.totalAll,
@@ -514,66 +497,7 @@ app.post('/api/provider', (req, res) => {
         });
     });
 
-    // ==================== STOCK CONTENT ====================
-    app.get('/api/stock', (req, res) => {
-        const status = req.query.status || '';
-        const limit = parseInt(req.query.limit) || 50;
-        const offset = parseInt(req.query.offset) || 0;
-        const stocks = getStocks(limit, offset, status);
-        const total = getStockCount(status);
-        res.json({ stocks, total, limit, offset });
-    });
-
-    app.post('/api/stock', (req, res) => {
-        const { topic, caption, tags, videoPath, thumbnailPath, videoSize, trendSource } = req.body || {};
-        if (!topic) return res.status(400).json({ error: 'topic required' });
-        const id = createStock({ topic, caption, tags, videoPath, thumbnailPath, videoSize, trendSource });
-        if (!id) return res.status(500).json({ error: 'Gagal membuat stock' });
-        const vcount = parseInt(getSetting('stats_videos_generated', '0')) || 0;
-        setSetting('stats_videos_generated', String(vcount + 1));
-        res.json({ success: true, id });
-    });
-
-    app.get('/api/stock/:id', (req, res) => {
-        const stock = getStockById(parseInt(req.params.id));
-        if (!stock) return res.status(404).json({ error: 'Stock not found' });
-        res.json(stock);
-    });
-
-    app.get('/api/stock/:id/video', (req, res) => {
-        const stock = getStockById(parseInt(req.params.id));
-        if (!stock || !stock.video_path) return res.status(404).json({ error: 'Video not found' });
-        if (!fs.existsSync(stock.video_path)) return res.status(404).json({ error: 'File not found' });
-        res.setHeader('Content-Type', 'video/mp4');
-        res.setHeader('Content-Disposition', `attachment; filename="stock-${stock.id}.mp4"`);
-        fs.createReadStream(stock.video_path).pipe(res);
-    });
-
-    app.get('/api/stock/:id/thumbnail', (req, res) => {
-        const stock = getStockById(parseInt(req.params.id));
-        if (!stock || !stock.thumbnail_path) return res.status(404).json({ error: 'Thumbnail not found' });
-        if (!fs.existsSync(stock.thumbnail_path)) return res.status(404).json({ error: 'File not found' });
-        res.setHeader('Content-Type', 'image/jpeg');
-        fs.createReadStream(stock.thumbnail_path).pipe(res);
-    });
-
-    app.delete('/api/stock/:id', (req, res) => {
-        const stock = getStockById(parseInt(req.params.id));
-        if (!stock) return res.status(404).json({ error: 'Stock not found' });
-        deleteStock(parseInt(req.params.id));
-        res.json({ success: true });
-    });
-
-    app.put('/api/stock/:id', (req, res) => {
-        const { caption, tags, status } = req.body;
-        const updates = {};
-        if (caption !== undefined) updates.caption = caption;
-        if (tags !== undefined) updates.tags = tags;
-        if (status !== undefined) updates.status = status;
-        const ok = updateStock(parseInt(req.params.id), updates);
-        if (!ok) return res.status(404).json({ error: 'Stock not found or no changes' });
-        res.json({ success: true });
-    });
+    // ==================== START ====================
 
     // ==================== TIKTOK LOGIN ====================
     app.get("/tiktok-login", async (req, res) => {
@@ -629,8 +553,6 @@ setTimeout(check, 2000);
     app.get("/tiktok-logout", (req, res) => {
         closeWebLogin();
         res.send("OK");
-    });
-
     // ==================== TIKTOK COOKIES ====================
     app.get("/tiktok-cookies", (req, res) => {
         const cookies = getSetting('tiktok_cookies');
@@ -666,7 +588,7 @@ async function saveCookies() {
     const v = document.getElementById("cookieInput").value;
     const r = await fetch("/api/tiktok/set-cookies", {
         method: "POST",
-        headers: {"Content-Type":"application/json","Authorization":"Bearer "+localStorage.getItem("bot_wa_token")},
+        headers: {"Content-Type":"application/json","Authorization":"Bearer "+localStorage.getItem("token")},
         body: JSON.stringify({cookies: v})
     });
     const d = await r.json();
@@ -676,7 +598,7 @@ async function saveCookies() {
 async function deleteCookies() {
     const r = await fetch("/api/tiktok/delete-cookies", {
         method: "POST",
-        headers: {"Authorization":"Bearer "+localStorage.getItem("bot_wa_token")}
+        headers: {"Authorization":"Bearer "+localStorage.getItem("token")}
     });
     const d = await r.json();
     if (d.success) { document.getElementById("status").className = "status no"; document.getElementById("status").textContent = "Cookies dihapus"; document.getElementById("cookieInput").value = ""; }
@@ -696,14 +618,11 @@ async function deleteCookies() {
         deleteCookies();
         res.json({ success: true });
     });
-
+    });
     // ==================== OPENAI-COMPATIBLE API ====================
 // Allows using this bot as an OpenAI-compatible endpoint for external tools
 
 app.post('/v1/chat/completions', async (req, res) => {
-    if (!validateBearerToken(req)) {
-        return res.status(401).json({ error: { message: 'Unauthorized', type: 'auth_error' } });
-    }
     try {
         const { model, messages, temperature, max_tokens, stream } = req.body;
         if (!messages || !Array.isArray(messages)) {
@@ -734,9 +653,6 @@ app.post('/v1/chat/completions', async (req, res) => {
 });
 
 app.get('/v1/models', async (req, res) => {
-    if (!validateBearerToken(req)) {
-        return res.status(401).json({ error: { message: 'Unauthorized', type: 'auth_error' } });
-    }
     try {
         const models = await fetchAvailableModels();
         res.json({
