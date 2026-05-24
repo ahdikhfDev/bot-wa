@@ -10,16 +10,65 @@ const STOCK_DIR = '/home/thirty/bot-wa/stock-videos';
 const LOCK_FILE = '/tmp/auto-pipeline.lock';
 const LOG_FILE = '/tmp/auto-pipeline.log';
 const API_URL = 'http://localhost:6789';
+const STALE_LOCK_MS = parseInt(process.env.AUTO_PIPELINE_STALE_LOCK_MS || String(2 * 60 * 60 * 1000), 10);
 
-if (fs.existsSync(LOCK_FILE)) {
-  const age = Date.now() - fs.statSync(LOCK_FILE).mtimeMs;
-  if (age < 7200000) {
-    console.log('Pipeline still running, skipping');
-    process.exit(0);
+function readLockMeta() {
+  try {
+    return JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8'));
+  } catch {
+    return null;
   }
-  fs.unlinkSync(LOCK_FILE);
 }
-fs.writeFileSync(LOCK_FILE, String(Date.now()));
+
+function isProcessAlive(pid) {
+  if (!pid || typeof pid !== 'number') return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acquireLock() {
+  const now = Date.now();
+  const lockMeta = { pid: process.pid, startedAt: now };
+
+  try {
+    const fd = fs.openSync(LOCK_FILE, 'wx');
+    fs.writeFileSync(fd, JSON.stringify(lockMeta));
+    fs.closeSync(fd);
+    return true;
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+  }
+
+  const current = readLockMeta();
+  const startedAt = current?.startedAt || 0;
+  const age = now - startedAt;
+  const running = isProcessAlive(current?.pid);
+
+  if (running && age < STALE_LOCK_MS) {
+    console.log('Pipeline still running by PID ' + current.pid + ', skipping');
+    return false;
+  }
+
+  try { fs.unlinkSync(LOCK_FILE); } catch {}
+
+  try {
+    const fd = fs.openSync(LOCK_FILE, 'wx');
+    fs.writeFileSync(fd, JSON.stringify(lockMeta));
+    fs.closeSync(fd);
+    return true;
+  } catch {
+    console.log('Lock race detected, skipping');
+    return false;
+  }
+}
+
+if (!acquireLock()) {
+  process.exit(0);
+}
 
 function log(msg) {
   const line = '[' + new Date().toISOString().slice(11, 19) + '] ' + msg;
@@ -57,7 +106,7 @@ async function main() {
     const trending = await pickBestTrending();
     const topic = trending.topic;
     const tags = trending.hashtags || [];
-    log('Picked:   + topic +   (source: ' + trending.source + ')');
+    log('Picked: ' + topic + ' (source: ' + trending.source + ')');
 
     log('Generating video...');
     const genResult = await generateVideo(topic, (msg) => {
@@ -114,7 +163,12 @@ async function main() {
     console.error(err);
     process.exit(1);
   } finally {
-    if (fs.existsSync(LOCK_FILE)) fs.unlinkSync(LOCK_FILE);
+    if (fs.existsSync(LOCK_FILE)) {
+      const current = readLockMeta();
+      if (!current || current.pid === process.pid) {
+        fs.unlinkSync(LOCK_FILE);
+      }
+    }
   }
 }
 

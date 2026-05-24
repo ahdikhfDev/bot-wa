@@ -28,6 +28,9 @@ const SCRIPT_PROMPT = [
 
 const MIN_VIDEO_DURATION = 60;
 const TARGET_DURATION = 65;
+const GEMINI_COOLDOWN_MS = parseInt(process.env.VIDEO_GEMINI_COOLDOWN_MS || "1500", 10);
+const TMP_WORKDIR_PREFIX = "thirty-video-";
+const CLEANUP_MAX_AGE_MS = parseInt(process.env.VIDEO_TMP_CLEANUP_MAX_AGE_MS || String(24 * 60 * 60 * 1000), 10);
 
 function enforceDuration(scenes) {
     const total = scenes.reduce((s, c) => s + (c.durasi_detik || 10), 0);
@@ -168,7 +171,7 @@ async function generateImages(scenes, workDir, onProgress) {
                 if (imgBuf) {
                     fs.writeFileSync(imgPath, imgBuf);
                     imagePaths.push(imgPath);
-                    if (i < total - 1) await sleep(6000);
+                    if (i < total - 1 && GEMINI_COOLDOWN_MS > 0) await sleep(GEMINI_COOLDOWN_MS);
                     continue;
                 }
             } catch (e) {
@@ -205,6 +208,7 @@ export async function generateVideo(topic, onProgress) {
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     const workDir = "/tmp/thirty-video-" + jobId;
     fs.mkdirSync(workDir, { recursive: true });
+    fs.writeFileSync(path.join(workDir, ".active"), String(Date.now()));
 
     try {
         onProgress("Nulis script...");
@@ -228,8 +232,11 @@ export async function generateVideo(topic, onProgress) {
                 fs.writeFileSync(audioPath, Buffer.from(b64, "base64"));
             } else {
                 const parts = await getAllAudioBase64(text, { lang: "id", slow: false });
-                const combined = parts.map(p => p.base64).join("");
-                fs.writeFileSync(audioPath, Buffer.from(combined, "base64"));
+                const audioBuffers = parts
+                    .map(p => p.base64)
+                    .filter(Boolean)
+                    .map(b64 => Buffer.from(b64, "base64"));
+                fs.writeFileSync(audioPath, Buffer.concat(audioBuffers));
             }
 
             audioPaths.push(audioPath);
@@ -244,8 +251,10 @@ export async function generateVideo(topic, onProgress) {
         onProgress("Video siap! (" + sizeMB + "MB)");
 
         activeJob = false;
+        try { fs.unlinkSync(path.join(workDir, ".active")); } catch {}
         return { outputPath, workDir, title: data.title };
     } catch (err) {
+        try { fs.unlinkSync(path.join(workDir, ".active")); } catch {}
         cleanup(workDir);
         activeJob = false;
         throw err;
@@ -308,7 +317,7 @@ async function assembleVideo(scenes, imagePaths, audios, workDir, outputPath) {
             "-loop", "1", "-i", img,
             "-i", audios[i],
             "-vf", vf,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
             "-t", String(dur), "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "128k", "-shortest",
             "-y", segPath
@@ -334,10 +343,15 @@ export function cleanup(workDir) {
 export function cleanupAll() {
     try {
         const files = fs.readdirSync("/tmp");
-        const dirs = files.filter(f => f.startsWith("thirty-video-"));
+        const now = Date.now();
+        const dirs = files.filter(f => f.startsWith(TMP_WORKDIR_PREFIX));
         for (const dir of dirs) {
             const fullPath = path.join("/tmp", dir);
             try {
+                const stat = fs.statSync(fullPath);
+                const age = now - stat.mtimeMs;
+                if (age < CLEANUP_MAX_AGE_MS) continue;
+                if (fs.existsSync(path.join(fullPath, ".active"))) continue;
                 fs.rmSync(fullPath, { recursive: true, force: true });
                 console.log("Cleaned up: " + fullPath);
             } catch {}
