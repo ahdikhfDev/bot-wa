@@ -205,5 +205,34 @@ Hapus: /reminder delete [nomor]`
         await sock.sendMessage(remoteJid, {
             text: `✅ *Reminder disimpan!*\n📅 ${dateStr} WIB\n📝 ${parsed.message}`
         });
+    },
+
+    detect(text) {
+        const lower = text.toLowerCase();
+        const keywords = ['ingatkan', 'ingetin', 'remind', 'ingat', 'pengingat'];
+        const hasKeyword = keywords.some(k => lower.includes(k));
+        if (!hasKeyword) return null;
+
+        // Strip keywords for cleaner parsing
+        let cleanText = text;
+        keywords.forEach(k => {
+            const reg = new RegExp(`\\b${k}\\s*(saya|aku|donk|dong)?\\s*(untuk|buat)?\\s*`, 'i');
+            cleanText = cleanText.replace(reg, '');
+        });
+
+        const parsed = parseReminderInput(cleanText.split(/\s+/));
+        return parsed ? { type: 'reminder', ...parsed } : null;
+    },
+
+    async execute(sock, remoteJid, text, isOwner) {
+        const parsed = this.detect(text);
+        if (!parsed) return false;
+
+        addReminder(remoteJid, parsed.triggerTimeMs, parsed.message);
+        const dateStr = formatTime(parsed.triggerTimeMs);
+        await sock.sendMessage(remoteJid, {
+            text: `✅ *Reminder disimpan (via AI)!*\n📅 ${dateStr} WIB\n📝 ${parsed.message}`
+        });
+        return true;
     }
 };

@@ -7,9 +7,10 @@ import { findSkillByCommand, findSkillByNaturalLanguage } from '../skills/_loade
 import { formatSearchResults, searchWeb, searchNews } from '../services/search.js';
 import { buildContext } from '../services/contextBuilder.js';
 import { CONFIG, assertBufferLimit, isOwnerId } from '../config.js';
-import { PDFParse } from 'pdf-parse';
+import PDFParse from 'pdf-parse';
 import mammoth from 'mammoth';
 const spamCooldowns = new Map();
+setInterval(() => spamCooldowns.clear(), 60 * 60 * 1000);
 
 /**
  * Safe media downloader using streaming to prevent OOM
@@ -225,11 +226,8 @@ export async function handleMessage(sock, msg) {
 
                 let docText = '';
                 if (isPDF) {
-                    const u8 = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-                    const parser = new PDFParse({ data: u8 });
-                    await parser.load();
-                    const allText = await parser.getText();
-                    docText = (allText?.text || '').substring(0, 3000);
+                    const data = await PDFParse(buffer);
+                    docText = (data?.text || '').substring(0, 3000);
                 } else if (fileName.toLowerCase().endsWith('.docx')) {
                     const result = await mammoth.extractRawText({ buffer });
                     docText = (result.value || '').substring(0, 3000);

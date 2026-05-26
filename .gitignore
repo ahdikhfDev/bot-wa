@@ -4,6 +4,8 @@ auth_session_link/
 logs/
 *.tar.gz
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 .env
 .codex-backups/
 *.bak*

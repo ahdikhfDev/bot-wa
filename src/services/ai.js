@@ -221,7 +221,7 @@ export async function callAIAnthropic(prompt, history = [], mode = 'asik', chatI
         const SYSTEM_PROMPT = `${personality}\n\n${GLOBAL_RULES}\n\n${contextBlock ? `(lampiran - ${contextBlock})` : ''}`;
 
         const msg = await client.messages.create({
-            model: "claude-3-haiku-20240307",
+            model: "claude-haiku-4-5-20251001",
             max_tokens: 1024,
             system: SYSTEM_PROMPT,
             messages: history.map(h => ({ role: h.role, content: h.content })).concat([{ role: 'user', content: prompt }])
@@ -359,7 +359,16 @@ export function getVoiceUrl(text, lang = 'id') {
 }
 
 export async function getVoiceBuffer(text, lang = 'id') {
-    return null; 
+    try {
+        const url = getVoiceUrl(text, lang);
+        if (!url) return null;
+        const resp = await fetch(url);
+        const arrayBuffer = await resp.arrayBuffer();
+        return Buffer.from(arrayBuffer);
+    } catch (err) {
+        console.error('getVoiceBuffer error:', err.message);
+        return null;
+    }
 }
 
 export async function summarizeText(text, mode = 'asik', chatId = null) {
