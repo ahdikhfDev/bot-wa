@@ -1,20 +1,31 @@
+import { getSetting } from './db.js';
+
 const UA = 'ThirtyBot/1.0 (WhatsApp AI Assistant)';
 const MAX_RESULTS = 5;
+const SEARCH_TIMEOUT_MS = parseInt(process.env.SEARCH_TIMEOUT_MS || '12000', 10);
 
 function hasApiKey(key) {
-    const val = process.env[key];
+    const val = getSetting(key) || process.env[key];
     return val && val.length > 0 && !val.startsWith('YOUR_');
+}
+
+function getApiKey(key) {
+    return getSetting(key) || process.env[key] || '';
+}
+
+function fetchWithTimeout(url, options = {}) {
+    return fetch(url, { ...options, signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
 }
 
 // ==================== TAVILY SEARCH (best for AI, real web results) ====================
 
 export async function searchTavily(query) {
     try {
-        const r = await fetch('https://api.tavily.com/search', {
+        const r = await fetchWithTimeout('https://api.tavily.com/search', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                api_key: process.env.TAVILY_API_KEY,
+                api_key: getApiKey('TAVILY_API_KEY'),
                 query,
                 search_depth: 'basic',
                 max_results: MAX_RESULTS,
@@ -43,7 +54,7 @@ export async function searchTavily(query) {
 export async function searchWikipedia(query) {
     try {
         const url = `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=${MAX_RESULTS}&namespace=0&format=json`;
-        const r = await fetch(url, { headers: { 'User-Agent': UA } });
+        const r = await fetchWithTimeout(url, { headers: { 'User-Agent': UA } });
         const d = await r.json();
         if (!d || !d[1] || d[1].length === 0) {
             return { error: 'Tidak ada hasil di Wikipedia.' };
@@ -56,7 +67,7 @@ export async function searchWikipedia(query) {
             let snippet = '';
             try {
                 const extUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
-                const extR = await fetch(extUrl, { headers: { 'User-Agent': UA } });
+                const extR = await fetchWithTimeout(extUrl, { headers: { 'User-Agent': UA } });
                 const extD = await extR.json();
                 snippet = extD.extract?.substring(0, 200) || '';
             } catch {}
@@ -85,8 +96,8 @@ export async function searchWeb(query) {
 export async function searchNews(query) {
     if (hasApiKey('GNEWS_API_KEY')) {
         try {
-            const url = `https://gnews.io/api/v4/search?q=${encodeURIComponent(query)}&lang=id&country=id&max=${MAX_RESULTS}&apikey=${process.env.GNEWS_API_KEY}`;
-            const r = await fetch(url, { headers: { 'User-Agent': UA } });
+            const url = `https://gnews.io/api/v4/search?q=${encodeURIComponent(query)}&lang=id&country=id&max=${MAX_RESULTS}&apikey=${getApiKey('GNEWS_API_KEY')}`;
+            const r = await fetchWithTimeout(url, { headers: { 'User-Agent': UA } });
             const d = await r.json();
             if (!d.errors && d.articles?.length > 0) {
                 const items = d.articles.slice(0, MAX_RESULTS).map(a => ({
@@ -134,14 +145,14 @@ export function formatSearchResults(data) {
 // ==================== PATTERN DETECTION ====================
 
 const SEARCH_PATTERNS = [
-    { regex: /^cari(?:kan)?(?:\s+(?:saya|aku|gw|gue))?\s+(.+)/i, type: 'web' },
-    { regex: /^search(?:kan)?(?:\s+(?:saya|aku|gw|gue))?\s+(.+)/i, type: 'web' },
-    { regex: /^(?:berita|news)\s+(.+)/i, type: 'news' },
-    { regex: /^info\s+(?:tentang\s+)?(.+)/i, type: 'web' },
-    { regex: /^apa\s+itu\s+(.+)/i, type: 'web' },
-    { regex: /^carikan\s+(?:saya|aku|gw|gue)?\s*(.+)/i, type: 'web' },
-    { regex: /^siapakah\s+(.+)/i, type: 'web' },
-    { regex: /^jelaskan\s+(?:tentang\s+)?(.+)/i, type: 'web' },
+    { regex: /(?:^|\s)cari+k?a?n?(?:\s+(?:saya|aku|gw|gue))?\s+(.+)/i, type: 'web' },
+    { regex: /(?:^|\s)search(?:kan)?(?:\s+(?:saya|aku|gw|gue))?\s+(.+)/i, type: 'web' },
+    { regex: /(?:^|\s)(?:berita|news)\s+(.+)/i, type: 'news' },
+    { regex: /(?:^|\s)info\s+(?:tentang\s+)?(.+)/i, type: 'web' },
+    { regex: /(?:^|\s)apa\s+itu\s+(.+)/i, type: 'web' },
+    { regex: /(?:^|\s)siapakah\s+(.+)/i, type: 'web' },
+    { regex: /(?:^|\s)jelaskan\s+(?:tentang\s+)?(.+)/i, type: 'web' },
+    { regex: /(?:^|\s)googling\s+(.+)/i, type: 'web' },
 ];
 
 export function detectSearchQuery(text) {

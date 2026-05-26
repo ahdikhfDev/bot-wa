@@ -1,45 +1,50 @@
-import { callAI, chatWithContext, transcribeAudio, callAIVision, getVoiceBuffer, extractAndStoreMemories, extractFromDocument } from '../services/ai.js';
-import { addContextMessage, getMode, isWhitelisted, addMemory, getInteractionCount, incrementInteractionCount, resetInteractionCount, broadcastTargets, pendingBroadcasts, deletePendingBroadcast } from '../services/db.js';
-import { downloadMediaMessage } from 'baileys';
+import { callAI, chatWithContext, transcribeAudio, callAIVision, extractFromDocument } from '../services/ai.js';
+import { addContextMessage, getMode, isWhitelisted, addMemory, broadcastTargets, pendingBroadcasts, deletePendingBroadcast } from '../services/db.js';
+import { downloadContentFromMessage } from 'baileys';
 import fs from 'fs/promises';
 import path from 'path';
-import { findSkillByCommand, findSkillByNaturalLanguage, isSkillEnabled } from '../skills/_loader.js';
-import { formatSearchResults } from '../services/search.js';
-
-const PREFIX = process.env.BOT_PREFIX || '/';
-const GROUP_CONTEXT_ENABLED = process.env.GROUP_CONTEXT_ENABLED !== 'false';
-
+import { findSkillByCommand, findSkillByNaturalLanguage } from '../skills/_loader.js';
+import { formatSearchResults, searchWeb, searchNews } from '../services/search.js';
+import { buildContext } from '../services/contextBuilder.js';
+import { CONFIG, assertBufferLimit, isOwnerId } from '../config.js';
+import { PDFParse } from 'pdf-parse';
+import mammoth from 'mammoth';
 const spamCooldowns = new Map();
-const SPAM_COOLDOWN_MS = parseInt(process.env.SPAM_COOLDOWN_MS) || 1500;
+
+/**
+ * Safe media downloader using streaming to prevent OOM
+ */
+async function safeDownloadMedia(msg, type, limit) {
+    const stream = await downloadContentFromMessage(msg.message[type], type.replace('Message', ''));
+    let buffer = Buffer.from([]);
+    for await (const chunk of stream) {
+        buffer = Buffer.concat([buffer, chunk]);
+        if (buffer.length > limit) {
+            const mb = (limit / 1024 / 1024).toFixed(0);
+            throw new Error(`Media terlalu besar. Maksimal ${mb}MB.`);
+        }
+    }
+    return buffer;
+}
 
 export async function handleMessage(sock, msg) {
     try {
         let messageContent = getMessageText(msg);
-        if (!messageContent) return;
+        if (!msg.message) return;
 
         let remoteJid = msg.key.remoteJid;
         let senderJid = msg.key.participant || msg.key.remoteJid;
         let senderNumber = senderJid.split('@')[0];
-        let OWNER_NUMBER = process.env.OWNER_NUMBER;
-        let OWNER_LID = '36722373091439';
-        let isOwner = senderNumber === OWNER_NUMBER || senderNumber === OWNER_LID;
-
-        // ==================== BUILD CONTEXT OBJECT ====================
-        const context = { sock, msg, remoteJid, senderJid, senderNumber, isOwner };
-
-        // ==================== REMINDER DETECTION (sebelum apapun) ====================
-        const reminderSkill = findSkillByNaturalLanguage(messageContent);
-        if (reminderSkill && reminderSkill.skill.name === 'reminder') {
-            const handled = await reminderSkill.skill.execute(sock, remoteJid, messageContent, isOwner);
-            if (handled) return;
-        }
+        const isGroup = remoteJid.endsWith('@g.us');
+        let isOwner = isOwnerId(senderJid) || isOwnerId(senderNumber);
 
         // ==================== ANTI-SPAM COOLDOWN ====================
         if (!isOwner) {
+            const cooldownKey = isGroup ? senderJid : remoteJid;
             const now = Date.now();
-            const lastTime = spamCooldowns.get(remoteJid) || 0;
-            if (now - lastTime < SPAM_COOLDOWN_MS) return;
-            spamCooldowns.set(remoteJid, now);
+            const lastTime = spamCooldowns.get(cooldownKey) || 0;
+            if (now - lastTime < CONFIG.spamCooldownMs) return;
+            spamCooldowns.set(cooldownKey, now);
         }
 
         // ==================== MEDIA TYPE DETECTION ====================
@@ -81,8 +86,6 @@ export async function handleMessage(sock, msg) {
 
         if (!messageContent && !isAudio && !isImage && !isDocument) return;
 
-        remoteJid = msg.key.remoteJid;
-        const isGroup = remoteJid.endsWith('@g.us');
         if (isGroup) broadcastTargets.set(remoteJid, msg.pushName || 'Unknown');
         const sender = msg.pushName || 'Unknown';
         const botNumber = sock.user?.id?.split('@')[0]?.split(':')[0];
@@ -102,11 +105,16 @@ export async function handleMessage(sock, msg) {
         const isPrivateChat = !isGroup;
 
         let text = messageContent.trim();
-        let command = text.startsWith(PREFIX) ? text.slice(1).split(' ')[0].toLowerCase() : null;
-        let args = text.split(' ').slice(1);
+        if (text.length > CONFIG.maxTextLength) {
+            if (isPrivateChat || isMentioned || text.startsWith(CONFIG.prefix)) {
+                await sock.sendMessage(remoteJid, { text: `Pesan terlalu panjang. Maksimal ${CONFIG.maxTextLength} karakter.` });
+            }
+            return;
+        }
+        let { command, args } = parseCommand(text);
         const quotedText = getQuotedText(msg);
 
-        if (GROUP_CONTEXT_ENABLED && text) {
+        if (CONFIG.groupContextEnabled && text) {
             addContextMessage(remoteJid, sender, text);
         }
 
@@ -117,28 +125,33 @@ export async function handleMessage(sock, msg) {
         if (isOwner && !command) {
             const pending = pendingBroadcasts.get(remoteJid);
             if (pending) {
-                const answer = text.trim().toLowerCase();
-                if (/^(y|yes|ya|yakin|send|kirim|gas|lanjut)$/.test(answer)) {
-                    deletePendingBroadcast(remoteJid);
-                    let sent = 0, failed = 0;
-                    for (const [jid] of pending.targets) {
-                        try {
-                            await sock.sendMessage(jid, { text: `📢 *Broadcast dari Owner* 📢\n\n${pending.message}` });
-                            sent++;
-                        } catch { failed++; }
+                // Must reply to bot's confirmation message
+                const isReplyToBot = quotedText && (quotedText.includes('_Kirim? (y/n)_') || quotedText.includes('Broadcast ke'));
+                
+                if (isReplyToBot) {
+                    const answer = text.trim().toLowerCase();
+                    if (/^(y|yes|ya|yakin|send|kirim|gas|lanjut)$/.test(answer)) {
+                        deletePendingBroadcast(remoteJid);
+                        let sent = 0, failed = 0;
+                        for (const [jid] of pending.targets) {
+                            try {
+                                await sock.sendMessage(jid, { text: `📢 *Broadcast dari Owner* 📢\n\n${pending.message}` });
+                                sent++;
+                            } catch { failed++; }
+                        }
+                        await sock.sendMessage(remoteJid, { text: `✅ Broadcast selesai!\n📨 Terkirim: ${sent}/${pending.targets.size}\n❌ Gagal: ${failed}` });
+                        return;
+                    } else if (/^(n|no|gak|nggak|cancel|batal|jangan)$/.test(answer)) {
+                        deletePendingBroadcast(remoteJid);
+                        await sock.sendMessage(remoteJid, { text: '❌ Broadcast dibatalkan.' });
+                        return;
                     }
-                    await sock.sendMessage(remoteJid, { text: `✅ Broadcast selesai!\n📨 Terkirim: ${sent}/${pending.targets.size}\n❌ Gagal: ${failed}` });
-                    return;
-                } else if (/^(n|no|gak|nggak|cancel|batal|jangan)$/.test(answer)) {
-                    deletePendingBroadcast(remoteJid);
-                    await sock.sendMessage(remoteJid, { text: '❌ Broadcast dibatalkan.' });
-                    return;
                 }
             }
         }
 
         // ==================== SECURITY & WHITELIST ====================
-        isOwner = senderNumber === OWNER_NUMBER || senderNumber === OWNER_LID;
+        isOwner = isOwnerId(senderJid) || isOwnerId(senderNumber);
         console.log(`   → senderJid: ${senderJid}, isOwner: ${isOwner}`);
 
         const isAuthorized = isOwner || isWhitelisted(remoteJid) || isWhitelisted(senderJid);
@@ -153,9 +166,8 @@ export async function handleMessage(sock, msg) {
         if (isAudio && (isPrivateChat || (isGroup && isMentioned))) {
             await sock.sendMessage(remoteJid, { text: '⏳ _Mendengarkan Voice Note..._' });
             try {
-                const buffer = await downloadMediaMessage(
-                    audioMsgToDownload, 'buffer', {},
-                    { logger: console, reuploadRequest: sock.updateMediaMessage }
+                const buffer = await safeDownloadMedia(
+                    audioMsgToDownload, 'audioMessage', CONFIG.maxInboundMediaBytes
                 );
                 const tempPath = path.join(process.cwd(), `temp_${Date.now()}.ogg`);
                 await fs.writeFile(tempPath, buffer);
@@ -179,14 +191,12 @@ export async function handleMessage(sock, msg) {
         if (isImage && (isPrivateChat || (isGroup && isMentioned))) {
             await sock.sendMessage(remoteJid, { text: '👁️ _Sedang melihat gambar..._' });
             try {
-                const buffer = await downloadMediaMessage(
-                    imageMsgToDownload, 'buffer', {},
-                    { logger: console, reuploadRequest: sock.updateMediaMessage }
+                const buffer = await safeDownloadMedia(
+                    imageMsgToDownload, 'imageMessage', CONFIG.maxInboundMediaBytes
                 );
                 const base64Image = buffer.toString('base64');
                 const mode = getMode(remoteJid);
                 const prompt = (text && text !== '[Gambar]') ? text : null;
-                const { buildContext } = await import('../services/contextBuilder.js');
                 const ctx = buildContext(remoteJid, prompt || '');
                 const response = await callAIVision(prompt, base64Image, mode, remoteJid, ctx.contextText);
                 await sock.sendMessage(remoteJid, { text: response });
@@ -202,9 +212,8 @@ export async function handleMessage(sock, msg) {
         if (isDocument && (isPrivateChat || (isGroup && isMentioned))) {
             await sock.sendMessage(remoteJid, { text: '📄 _Membaca dokumen..._' });
             try {
-                const buffer = await downloadMediaMessage(
-                    documentMsgToDownload, 'buffer', {},
-                    { logger: console, reuploadRequest: sock.updateMediaMessage }
+                const buffer = await safeDownloadMedia(
+                    documentMsgToDownload, 'documentMessage', CONFIG.maxInboundMediaBytes
                 );
 
                 const msgType = Object.keys(msg.message || {}).find(t => !t.startsWith('contextInfo'));
@@ -216,14 +225,12 @@ export async function handleMessage(sock, msg) {
 
                 let docText = '';
                 if (isPDF) {
-                    const { PDFParse } = await import('pdf-parse');
                     const u8 = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
                     const parser = new PDFParse({ data: u8 });
                     await parser.load();
                     const allText = await parser.getText();
                     docText = (allText?.text || '').substring(0, 3000);
                 } else if (fileName.toLowerCase().endsWith('.docx')) {
-                    const mammoth = await import('mammoth');
                     const result = await mammoth.extractRawText({ buffer });
                     docText = (result.value || '').substring(0, 3000);
                 } else {
@@ -255,8 +262,7 @@ export async function handleMessage(sock, msg) {
         }
 
         // Re-parse command & args in case text changed (transcript)
-        command = text.startsWith(PREFIX) ? text.slice(1).split(' ')[0].toLowerCase() : null;
-        args = text.split(' ').slice(1);
+        ({ command, args } = parseCommand(text));
 
         // ==================== SKILL COMMAND DISPATCH ====================
         if (command) {
@@ -272,11 +278,27 @@ export async function handleMessage(sock, msg) {
                     await sock.sendMessage(remoteJid, { text: '❌ Command ini hanya bisa dipakai di grup.' });
                     return;
                 }
+                if (skill.adminOnly && isGroup && !isOwner) {
+                    const allowed = await isGroupAdmin(sock, remoteJid, senderJid);
+                    if (!allowed) {
+                        await sock.sendMessage(remoteJid, { text: '⛔ Command ini hanya untuk admin grup.' });
+                        return;
+                    }
+                }
                 await skill.handler(sock, remoteJid, args, {
                     command, isOwner, isGroup, msg, sender, text,
-                    mentionedJids, quotedText, GROUP_CONTEXT_ENABLED, isAudio
+                    mentionedJids, quotedText, GROUP_CONTEXT_ENABLED: CONFIG.groupContextEnabled, isAudio
                 });
                 return;
+            }
+        }
+
+        // ==================== REMINDER NATURAL LANGUAGE ====================
+        if (!command && (isPrivateChat || (isGroup && isMentioned))) {
+            const rSkill = findSkillByNaturalLanguage(text);
+            if (rSkill && rSkill.skill.name === 'reminder') {
+                const handled = await rSkill.skill.execute(sock, remoteJid, text, isOwner);
+                if (handled) return;
             }
         }
 
@@ -286,7 +308,6 @@ export async function handleMessage(sock, msg) {
             if (nlMatch && nlMatch.skill.name === 'search') {
                 const result = nlMatch.result;
                 await sock.sendPresenceUpdate('composing', remoteJid);
-                const { searchWeb, searchNews } = await import('../services/search.js');
                 await sock.sendMessage(remoteJid, { text: `🔍 *Mencari ${result.type === 'news' ? 'berita' : 'info'} tentang:* ${result.query}...` });
                 const results = result.type === 'news'
                     ? await searchNews(result.query)
@@ -302,7 +323,7 @@ export async function handleMessage(sock, msg) {
             if (aiSkill) {
                 await aiSkill.respond(sock, remoteJid, text, {
                     msg, isGroup, isMentioned, isPrivateChat, isAudio,
-                    GROUP_CONTEXT_ENABLED, quotedText
+                    GROUP_CONTEXT_ENABLED: CONFIG.groupContextEnabled, quotedText
                 });
             } else {
                 // Fallback: direct AI call
@@ -316,7 +337,7 @@ export async function handleMessage(sock, msg) {
                 await sock.sendMessage(remoteJid, { text: response }, { quoted: msg }).catch(() => {
                     sock.sendMessage(remoteJid, { text: response });
                 });
-                if (GROUP_CONTEXT_ENABLED) {
+                if (CONFIG.groupContextEnabled) {
                     addContextMessage(remoteJid, 'Thirty (Bot)', response);
                 }
             }
@@ -344,6 +365,27 @@ function getMessageText(msg) {
     if (messageObj?.caption) return messageObj.caption;
     if (typeof messageObj === 'string') return messageObj;
     return null;
+}
+
+function parseCommand(text) {
+    if (!text.startsWith(CONFIG.prefix)) return { command: null, args: [] };
+    const body = text.slice(CONFIG.prefix.length).trim();
+    const parts = body.match(/"([^"]*)"|'([^']*)'|\S+/g) || [];
+    const command = (parts.shift() || '').toLowerCase();
+    const args = parts.map(p => p.replace(/^(['"])(.*)\1$/, '$2'));
+    return { command, args };
+}
+
+async function isGroupAdmin(sock, groupJid, senderJid) {
+    try {
+        const meta = await sock.groupMetadata(groupJid);
+        const senderId = senderJid.split('@')[0];
+        const member = meta.participants.find(p => p.id?.split('@')[0] === senderId);
+        return member?.admin === 'admin' || member?.admin === 'superadmin';
+    } catch (err) {
+        console.warn('Gagal cek admin grup:', err.message);
+        return false;
+    }
 }
 
 function getQuotedText(msg) {

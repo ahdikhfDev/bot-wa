@@ -8,6 +8,7 @@ const dbPath = process.env.DB_PATH || path.join(__dirname, '../database.sqlite')
 
 let db;
 let SQL;
+let saveTimer = null;
 
 async function initDb() {
     if (!SQL) {
@@ -70,9 +71,11 @@ async function initDb() {
             chat_id TEXT NOT NULL,
             trigger_time INTEGER NOT NULL,
             message TEXT NOT NULL,
-            status TEXT DEFAULT 'pending'
+            status TEXT DEFAULT 'pending',
+            retry_count INTEGER DEFAULT 0
         )
     `);
+    try { db.run('ALTER TABLE reminders ADD COLUMN retry_count INTEGER DEFAULT 0'); } catch {}
 
     // Tabel untuk Long-Term Memory / Learning
     db.run(`
@@ -126,10 +129,61 @@ async function initDb() {
     console.log('💾 Database initialized');
 }
 
-function saveDb() {
-    const data = db.export();
-    const buffer = Buffer.from(data);
-    fs.writeFileSync(dbPath, buffer);
+let isSaving = false;
+let saveRequested = false;
+
+async function saveDb() {
+    if (!db) return;
+    if (isSaving) {
+        saveRequested = true;
+        return;
+    }
+    isSaving = true;
+
+    if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+    }
+
+    try {
+        const data = db.export();
+        const buffer = Buffer.from(data);
+        await fs.promises.writeFile(dbPath, buffer);
+    } catch (err) {
+        console.error('❌ Failed to save database:', err.message);
+    } finally {
+        isSaving = false;
+        if (saveRequested) {
+            saveRequested = false;
+            saveDb();
+        }
+    }
+}
+
+function saveDbDebounced(delayMs = 1500) {
+    if (saveTimer) return;
+    saveTimer = setTimeout(() => {
+        saveTimer = null;
+        saveDb();
+    }, delayMs);
+}
+
+export async function flushDb() {
+    if (!db) return;
+    await saveDb();
+}
+
+// Helper: Calculate word overlap between two strings (for deduplication)
+function getWordOverlap(str1, str2) {
+    const w1 = new Set(str1.toLowerCase().split(/\W+/).filter(w => w.length > 3));
+    const w2 = new Set(str2.toLowerCase().split(/\W+/).filter(w => w.length > 3));
+    if (w1.size === 0 || w2.size === 0) return 0;
+    
+    let intersect = 0;
+    for (const w of w1) {
+        if (w2.has(w)) intersect++;
+    }
+    return intersect / Math.min(w1.size, w2.size);
 }
 
 export function initDatabase() {
@@ -189,7 +243,7 @@ export function addContextMessage(groupId, sender, message) {
         )
     `, [groupId]);
 
-    saveDb();
+    saveDbDebounced();
 }
 
 export function getGroupHistory(groupId, limit = 20) {
@@ -210,7 +264,8 @@ export function getGroupHistory(groupId, limit = 20) {
         return obj;
     });
 
-    return messages.reverse(); // Chronological order
+    // Balikkan urutan agar kronologis (paling lama -> paling baru)
+    return messages.reverse();
 }
 
 export function clearGroupContext(groupId) {
@@ -282,18 +337,54 @@ export function addReminder(chatId, triggerTimeMs, message) {
 export function getPendingReminders() {
     if (!db) return [];
     const now = Date.now();
-    const result = db.exec('SELECT id, chat_id, message FROM reminders WHERE status = "pending" AND trigger_time <= ?', [now]);
+    const result = db.exec('SELECT id, chat_id, message, COALESCE(retry_count, 0), trigger_time FROM reminders WHERE status = "pending" AND trigger_time <= ?', [now]);
     if (!result.length) return [];
     return result[0].values.map(row => ({
         id: row[0],
         chatId: row[1],
-        message: row[2]
+        message: row[2],
+        retryCount: row[3],
+        triggerTime: row[4]
     }));
 }
 
-export function markReminderDone(id) {
+export function getChatReminders(chatId) {
+    if (!db) return [];
+    const result = db.exec('SELECT id, trigger_time, message, status, COALESCE(retry_count, 0) FROM reminders WHERE chat_id = ? ORDER BY trigger_time ASC', [chatId]);
+    if (!result.length) return [];
+    return result[0].values.map(row => ({
+        id: row[0],
+        triggerTime: row[1],
+        message: row[2],
+        status: row[3],
+        retryCount: row[4]
+    }));
+}
+
+export function deleteReminder(id) {
     if (!db) return;
-    db.run('UPDATE reminders SET status = "done" WHERE id = ?', [id]);
+    db.run('DELETE FROM reminders WHERE id = ?', [id]);
+    saveDb();
+}
+
+export function incrementReminderRetry(id) {
+    if (!db) return;
+    const now = Date.now();
+    const result = db.exec('SELECT COALESCE(retry_count, 0) FROM reminders WHERE id = ?', [id]);
+    if (!result.length || !result[0].values.length) return;
+    const retryCount = result[0].values[0][0] + 1;
+    if (retryCount >= 3) {
+        db.run('UPDATE reminders SET retry_count = ?, status = "done" WHERE id = ?', [retryCount, id]);
+    } else {
+        db.run('UPDATE reminders SET retry_count = ?, trigger_time = ? WHERE id = ?', [retryCount, now + 5 * 60 * 1000, id]);
+    }
+    saveDb();
+}
+
+export function expireOldReminders() {
+    if (!db) return;
+    const cutoff = Date.now() - 86400000;
+    db.run('UPDATE reminders SET status = "expired" WHERE status = "pending" AND trigger_time < ? AND COALESCE(retry_count, 0) = 0', [cutoff]);
     saveDb();
 }
 
@@ -307,10 +398,16 @@ function extractKeywords(text) {
 
 export function addMemory(groupId, content, category = 'general', confidence = 1, source = 'chat') {
     if (!db || !content) return;
+    
+    // Better Deduplication: check word overlap with recent memories
+    const recent = getMemories(groupId, 15);
+    const isDuplicate = recent.some(m => getWordOverlap(m.content, content) > 0.75);
+    if (isDuplicate) return;
+
     const keywords = extractKeywords(content);
     db.run('INSERT INTO memories (group_id, content, category, confidence, keywords, source) VALUES (?, ?, ?, ?, ?, ?)',
         [groupId, content, category, confidence, keywords, source]);
-    saveDb();
+    saveDbDebounced();
 }
 
 export function getMemories(groupId, limit = 10, category = null) {
@@ -583,6 +680,11 @@ export function registerSkill(name, title, description, commands, opts = {}) {
         INSERT OR IGNORE INTO skills (name, title, description, enabled, owner_only, group_only, has_config, commands)
         VALUES (?, ?, ?, 1, ?, ?, ?, ?)
     `, [name, title, description, ownerOnly, groupOnly, hasConfig, commands]);
+    // Sync code-driven fields on every load (commands, title, etc)
+    db.run(`
+        UPDATE skills SET title = ?, description = ?, commands = ?, owner_only = ?, group_only = ?, has_config = ?
+        WHERE name = ?
+    `, [title, description, commands, ownerOnly, groupOnly, hasConfig, name]);
     saveDb();
 }
 
@@ -711,7 +813,7 @@ export function recordTokenUsage(promptTokens, completionTokens, model) {
     if (!db) return;
     db.run('INSERT INTO token_usage (prompt_tokens, completion_tokens, model) VALUES (?, ?, ?)',
         [promptTokens || 0, completionTokens || 0, model || '']);
-    saveDb();
+    saveDbDebounced();
 }
 
 export function getTokenUsageSummary() {
@@ -817,6 +919,12 @@ export function getConversationSummary(chatId) {
     return '';
 }
 
+export function clearConversationSummary(chatId) {
+    if (!db) return;
+    db.run('DELETE FROM conversation_summaries WHERE chat_id = ?', [chatId]);
+    saveDb();
+}
+
 // ==================== USER PROFILES ====================
 
 export function initUserProfileTable() {
@@ -854,9 +962,11 @@ export function addUserFact(jid, fact) {
     if (!db || !fact) return;
     const profile = getUserProfile(jid);
     const facts = profile?.facts || [];
-    // Dedup: skip if similar fact exists
-    const exists = facts.some(f => f.toLowerCase().includes(fact.substring(0, 20).toLowerCase()));
-    if (exists) return;
+    
+    // Better Deduplication: check word overlap
+    const isDuplicate = facts.some(f => getWordOverlap(f, fact) > 0.8);
+    if (isDuplicate) return;
+
     facts.push(fact);
     // Keep max 30 facts
     if (facts.length > 30) facts.splice(0, facts.length - 30);

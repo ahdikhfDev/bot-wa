@@ -1,4 +1,4 @@
-import { hasCookies, uploadVideo, startWebLogin, loginWithPassword, closeBrowser, closeWebLogin } from '../services/tiktok.js';
+import { hasCookies, uploadVideo, startWebLogin, closeBrowser, closeWebLogin } from '../services/tiktok.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -6,7 +6,8 @@ export default {
   name: 'tiktok',
   title: 'TikTok Upload',
   description: 'Upload video ke TikTok via /tt [caption]',
-  commands: ['tt', 'tiktok', 'logintiktok', 'login-tiktok', 'logintiktok-pass', 'login-tiktok-pass'],
+  commands: ['tt', 'tiktok', 'logintiktok', 'login-tiktok'],
+  ownerOnly: true,
 
   async handler(sock, remoteJid, args, context) {
     const cmd = context.command;
@@ -32,7 +33,7 @@ export default {
       fs.writeFileSync(tmpPath, Buffer.from(base64, 'base64'));
 
       await sock.sendMessage(remoteJid, {
-        image: fs.readFileSync(tmpPath),
+        image: { url: tmpPath },
         caption: 'Scan QR ini pake kamera TikTok kamu',
       });
       try { fs.unlinkSync(tmpPath); } catch {}
@@ -53,26 +54,6 @@ export default {
       return;
     }
 
-    
-    // Login with email/password
-    if (['logintiktok-pass', 'login-tiktok-pass'].includes(cmd)) {
-      const parts = args.join(' ').split(/' '/);
-      const email = parts[0] || '';
-      const password = parts.slice(1).join(' ') || '';
-      if (!email || !password) {
-        await sock.sendMessage(remoteJid, { text: 'Gunakan: /logintiktok-pass email@example.com password' });
-        return;
-      }
-      await sock.sendMessage(remoteJid, { text: 'Login TikTok dengan email/password...' });
-      const result = await loginWithPassword(email, password);
-      if (result.error) {
-        await sock.sendMessage(remoteJid, { text: `Gagal login: ${result.error}` });
-      } else {
-        await sock.sendMessage(remoteJid, { text: 'Login TikTok berhasil! Upload video via /tt [caption]' });
-      }
-      return;
-    }
-    
     // Upload command: /tt or /tiktok
     if (!hasCookies()) {
       await sock.sendMessage(remoteJid, { text: 'Belum login TikTok. Kirim /logintiktok dulu.' });
@@ -82,12 +63,6 @@ export default {
     const caption = args.join(' ') || '';
 
     let videoPath = null;
-    for (const arg of args) {
-      if (fs.existsSync(arg)) {
-        videoPath = arg;
-        break;
-      }
-    }
 
     if (!videoPath) {
       const lastVideo = global.last_video_path;
@@ -124,7 +99,7 @@ export default {
       await sock.sendMessage(remoteJid, { text: 'Upload selesai, cek TikTok kamu untuk status.' });
     }
 
-    await closeBrowser(result.browser);
+    if (result?.browser) await closeBrowser(result.browser);
   },
 };
 

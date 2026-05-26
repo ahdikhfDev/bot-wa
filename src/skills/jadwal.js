@@ -6,6 +6,7 @@ export default {
     description: 'Atur jadwal kegiatan grup',
     commands: ['jadwal'],
     groupOnly: true,
+    adminOnly: true,
 
     async handler(sock, remoteJid, args, context) {
         const { isGroup } = context;
@@ -16,13 +17,15 @@ export default {
 
         const sub = args[0]?.toLowerCase();
         if (sub === 'add' || sub === 'tambah') {
-            const text = args.slice(1).join(' ');
-            if (!text) {
-                await sock.sendMessage(remoteJid, { text: '❌ Usage: /jadwal tambah [deskripsi]' });
+            const hasTanggal = args.length > 2;
+            const tanggal = hasTanggal ? args[1] : 'manual';
+            const event = hasTanggal ? args.slice(2).join(' ') : args.slice(1).join(' ');
+            if (!event) {
+                await sock.sendMessage(remoteJid, { text: '❌ Usage: /jadwal tambah [tanggal] [deskripsi]' });
                 return;
             }
-            addJadwal(remoteJid, text, context.sender);
-            await sock.sendMessage(remoteJid, { text: `✅ Jadwal ditambahkan oleh ${context.sender}` });
+            addJadwal(remoteJid, tanggal, event);
+            await sock.sendMessage(remoteJid, { text: `✅ Jadwal ditambahkan: ${event}` });
         } else if (sub === 'del' || sub === 'hapus') {
             const id = parseInt(args[1]);
             if (!id) {

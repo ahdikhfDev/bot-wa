@@ -3,7 +3,6 @@ import { getSetting, setSetting } from './db.js';
 import path from 'path';
 
 const COOKIES_KEY = 'tiktok_cookies';
-const BROWSER_PATH = '/home/thirty/.cache/ms-playwright/chromium-1091/chrome-linux/chrome';
 const LAUNCH_ARGS = [
   '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
   '--disable-gpu', '--no-first-run', '--no-zygote',
@@ -15,10 +14,11 @@ let _loginBrowser = null;
 let _loginQRBase64 = null;
 
 async function launchBrowser(retries = 2) {
+  const executablePath = process.env.CHROME_PATH || undefined;
   for (let i = 0; i <= retries; i++) {
     try {
       return await chromium.launch({
-        executablePath: BROWSER_PATH, headless: true, args: LAUNCH_ARGS, timeout: 60000,
+        executablePath, headless: true, args: LAUNCH_ARGS, timeout: 60000,
       });
     } catch (err) {
       if (i === retries) throw err;
@@ -334,61 +334,5 @@ export async function uploadVideo(filePath, caption = '') {
   } catch (err) {
     try { await page.close(); } catch {}
     return { error: err.message, browser };
-  }
-}
-
-export async function loginWithPassword(email, password) {
-  let browser, page;
-  try {
-    browser = await launchBrowser();
-    page = await newPage(browser);
-
-    await page.goto('https://www.tiktok.com/login', { waitUntil: 'networkidle', timeout: 60000 });
-    await page.waitForTimeout(2000);
-
-    const hasPhoneEmail = await page.locator('text=Use phone / email / username').count();
-    if (hasPhoneEmail > 0) {
-      await page.locator('text=Use phone / email / username').first().click();
-      await page.waitForTimeout(2000);
-    }
-
-    const emailInput = page.locator('input[name="username"], input[type="text"][placeholder*="email"], input[placeholder*="Username"], input[placeholder*="Phone"]');
-    await emailInput.first().waitFor({ timeout: 10000 });
-    await emailInput.first().click();
-    await emailInput.first().fill(email);
-    await page.waitForTimeout(1000);
-
-    const passInput = page.locator('input[type="password"], input[name="password"]');
-    await passInput.first().waitFor({ timeout: 5000 });
-    await passInput.first().fill(password);
-    await page.waitForTimeout(1500);
-
-    const loginBtn = page.locator('button[type="submit"], button:has-text("Log in")').first();
-    if (await loginBtn.count() > 0) {
-      await loginBtn.evaluate(btn => btn.click());
-      await page.waitForTimeout(3000);
-      if (page.url().includes('/login')) {
-        await page.keyboard.press('Enter');
-        await page.waitForTimeout(3000);
-      }
-    }
-
-    await page.waitForTimeout(5000);
-
-    for (let i = 0; i < 30; i++) {
-      const url = page.url();
-      if (!url.includes('/login')) {
-        await saveCookies(page);
-        await page.close();
-        return { success: true };
-      }
-      await page.waitForTimeout(2000);
-    }
-
-    await page.close();
-    return { error: 'Gagal login. Cek email/password atau mungkin perlu verifikasi 2FA.' };
-  } catch (err) {
-    try { await page.close(); } catch {}
-    return { error: err.message };
   }
 }

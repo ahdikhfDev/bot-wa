@@ -41,10 +41,19 @@ export function getSkillHandler(name) {
 }
 
 export function findSkillByCommand(cmd) {
+    // Check in-memory registry first
     for (const [name, skill] of registry) {
         if ((skill.commands || []).includes(cmd)) {
             if (!isSkillEnabled(name)) return null;
             return skill;
+        }
+    }
+    // Fallback: check DB commands (in case file was edited while bot running)
+    const allSkills = getAllSkills();
+    for (const dbSkill of allSkills) {
+        if ((dbSkill.commands || []).includes(cmd) && dbSkill.enabled) {
+            const skill = registry.get(dbSkill.name);
+            if (skill) return skill;
         }
     }
     return null;

@@ -22,22 +22,18 @@ export default {
             return;
         }
 
-        await sock.sendMessage(remoteJid, {
+        let progressMsg = await sock.sendMessage(remoteJid, {
             text: 'Mulai generate video...'
         });
 
         try {
-            let lastProgress = '';
-            let lastSentAt = 0;
-            const PROGRESS_INTERVAL_MS = parseInt(process.env.VIDEO_PROGRESS_INTERVAL_MS || '4000', 10);
-
             const result = await generateVideo(topic, async (progress) => {
-                const now = Date.now();
-                const shouldSend = progress !== lastProgress && (now - lastSentAt >= PROGRESS_INTERVAL_MS || /siap|gagal|selesai/i.test(progress));
-                if (!shouldSend) return;
-                lastProgress = progress;
-                lastSentAt = now;
-                await sock.sendMessage(remoteJid, { text: progress });
+                if (progressMsg?.key) {
+                    await sock.sendMessage(remoteJid, {
+                        text: progress,
+                        edit: progressMsg.key
+                    });
+                }
             });
             global["last_video_path"] = result.outputPath;
 

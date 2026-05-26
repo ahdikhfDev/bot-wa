@@ -3,10 +3,9 @@ import path from "path";
 import fs from "fs";
 import ffmpegPath from "ffmpeg-static";
 import { execFile } from "child_process";
-import { getAudioBase64, getAllAudioBase64 } from "google-tts-api";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import Groq from "groq-sdk";
-import { getSetting, setSetting } from "./db.js";
+import { getSetting } from "./db.js";
+import { getGoogleTtsBase64, getAllGoogleTtsBase64 } from "./googleTts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -24,13 +23,33 @@ const SCRIPT_PROMPT = [
     "- Output HANYA JSON, tanpa teks lain"
 ].join("\n");
 
+const ROAST_PROMPT = [
+    "Kamu adalah script writer video roasting yang brutal dan ngena banget.",
+    "Buat script video roasting yang nyerang personalitas target secara lucu tapi sadis.",
+    "Output JSON dengan format:",
+    "{ \"title\": \"judul video\", \"scenes\": [",
+    "  { \"narasi\": \"Narasi Bahasa Indonesia\", \"visual_prompt\": \"English visual prompt\", \"durasi_detik\": 10 }",
+    "] }",
+    "Aturan:",
+    "- Total: 60-90 detik (6 scene)",
+    "- Scene 1: intro roasting yang langsung ngena, 2-5: terusin roast makin dalem, 6: penutup yang sadis",
+    "- narasi pake Bahasa Indonesia gaul, kasar, sinis, kayak standup comedy roasting on fire",
+    "- GUNAKAN kata-kata kasar (anjing, bangsat, goblok, tai, dll) secara NATURAL, jangan dipaksain",
+    "- max 200 karakter per scene",
+    "- JANGAN nyerang fisik, ras, agama, keluarga. Roast personality, kebiasaan, sifat, tingkah laku",
+    "- visual_prompt: deskripsi gambar Bahasa Inggris yang mendukung vibe roasting (karikatural, exaggerated)",
+    "- Output HANYA JSON, tanpa teks lain"
+].join("\n");
+
 
 
 const MIN_VIDEO_DURATION = 60;
 const TARGET_DURATION = 65;
-const GEMINI_COOLDOWN_MS = parseInt(process.env.VIDEO_GEMINI_COOLDOWN_MS || "1500", 10);
+
 const TMP_WORKDIR_PREFIX = "thirty-video-";
 const CLEANUP_MAX_AGE_MS = parseInt(process.env.VIDEO_TMP_CLEANUP_MAX_AGE_MS || String(24 * 60 * 60 * 1000), 10);
+const IMAGE_MAX_RETRIES_PER_SCENE = parseInt(process.env.VIDEO_IMAGE_MAX_RETRIES || "12", 10);
+const IMAGE_RETRY_DELAY_MS = parseInt(process.env.VIDEO_IMAGE_RETRY_DELAY_MS || "2500", 10);
 
 function enforceDuration(scenes) {
     const total = scenes.reduce((s, c) => s + (c.durasi_detik || 10), 0);
@@ -46,16 +65,8 @@ function enforceDuration(scenes) {
     }
 }
 
-let activeJob = false;
-let _genAI = null;
-
-function getGenAI() {
-    if (_genAI) return _genAI;
-    const apiKey = getSetting("GEMINI_API_KEY") || process.env.GEMINI_API_KEY;
-    if (!apiKey) return null;
-    _genAI = new GoogleGenerativeAI(apiKey);
-    return _genAI;
-}
+let videoQueue = Promise.resolve();
+let queueLength = 0;
 
 function getGroqClient() {
     const apiKey = getSetting("GROQ_API_KEY") || process.env.GROQ_API_KEY;
@@ -63,7 +74,8 @@ function getGroqClient() {
     return new Groq({ apiKey });
 }
 
-export function isVideoJobRunning() { return activeJob; }
+export function isVideoJobRunning() { return queueLength > 0; }
+export function getVideoQueueLength() { return queueLength; }
 
 function runFF(args) {
     return new Promise((resolve, reject) => {
@@ -74,191 +86,216 @@ function runFF(args) {
     });
 }
 
-const sleep = (ms) => new Promise(res => setTimeout(res, ms));
-
-async function generateScript(topic) {
-    const client = getGroqClient();
-    const r = await client.chat.completions.create({
-        model: "llama-3.1-8b-instant",
-        messages: [
-            { role: "system", content: SCRIPT_PROMPT },
-            { role: "user", content: "Buat script video tentang: " + topic }
-        ],
-        response_format: { type: "json_object" },
-        max_tokens: 4096,
-        temperature: 0.7
-    });
-
-    const text = r.choices[0]?.message?.content;
-    if (!text) throw new Error("Gagal generate script");
-
-    const parsed = JSON.parse(text);
-    if (!parsed.scenes || !parsed.scenes.length) throw new Error("Scenes kosong");
-    return parsed;
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function generateImageFromGemini(model, prompt) {
-    const result = await model.generateContent({
-        contents: [{
-            role: "user",
-            parts: [{
-                text: "Buat gambar: " + prompt + ". Format: digital illustration, portrait 9:16, HD quality."
-            }]
-        }]
-    });
-    const parts = result.response.candidates?.[0]?.content?.parts || [];
-    for (const p of parts) {
-        if (p.inlineData?.mimeType?.startsWith("image/")) {
-            return Buffer.from(p.inlineData.data, "base64");
-        }
+
+function extractJson(text) {
+    const cleaned = text
+        .replace(/,\s*}/g, '}')
+        .replace(/,\s*\]/g, ']');
+    try {
+        return JSON.parse(cleaned);
+    } catch {}
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+        try {
+            return JSON.parse(match[0]);
+        } catch {}
     }
     return null;
 }
 
-async function generateImageFromPollinations(prompt) {
+
+async function generateScript(topic) {
+    const client = getGroqClient();
+    const safeTopic = topic.replace(/["\\\n\r]/g, (c) => {
+        if (c === '"') return '\\"';
+        if (c === '\\') return '\\\\';
+        return ' ';
+    });
+
+    const isRoast = /roast/i.test(safeTopic);
+    const prompt = isRoast ? ROAST_PROMPT : SCRIPT_PROMPT;
+
+    let lastError = null;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const r = await client.chat.completions.create({
+                model: "qwen/qwen3-32b",
+                messages: [
+                    { role: "system", content: prompt },
+                    { role: "user", content: "Buat script video tentang: " + safeTopic }
+                ],
+                response_format: { type: "json_object" },
+                max_tokens: 4096,
+                temperature: attempt === 0 ? 0.7 : 0.3
+            });
+
+            const text = r.choices[0]?.message?.content;
+            if (!text) {
+                lastError = new Error("Gagal generate script: empty response");
+                continue;
+            }
+
+            const parsed = extractJson(text);
+            if (!parsed || !parsed.scenes || !parsed.scenes.length) {
+                lastError = new Error("Scenes kosong atau JSON tidak valid");
+                continue;
+            }
+            return parsed;
+        } catch (err) {
+            lastError = err;
+            const errMsg = typeof err.message === 'string' ? err.message : '';
+            if (errMsg.includes('failed_generation') || errMsg.includes('json_validate_failed')) {
+                const match = errMsg.match(/"failed_generation":"((?:[^"\\]|\\.)*)"/);
+                if (match) {
+                    try {
+                        const failedText = match[1]
+                            .replace(/\\n/g, '\n')
+                            .replace(/\\"/g, '"')
+                            .replace(/\\\\/g, '\\');
+                        const parsed = extractJson(failedText);
+                        if (parsed && parsed.scenes && parsed.scenes.length) {
+                            return parsed;
+                        }
+                    } catch {}
+                }
+            }
+            if (attempt < 2) {
+                await delay(1000 * (attempt + 1));
+            }
+        }
+    }
+
+    throw lastError || new Error("Gagal generate script setelah 3 percobaan");
+}
+
+
+async function generateImageFromPollinations(prompt, timeoutMs = 15000) {
     const url = "https://image.pollinations.ai/prompt/" +
         encodeURIComponent(prompt + ", digital illustration, 9:16") +
         "?width=720&height=1280";
-    const resp = await fetch(url, { signal: AbortSignal.timeout(120000) });
+    const resp = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
     if (!resp.ok) return null;
     const buf = Buffer.from(await resp.arrayBuffer());
     return buf.length > 1000 ? buf : null;
 }
 
-const FALLBACK_COLORS = [
-    ["#1a1a2e", "#e94560"], ["#0f3460", "#533483"], ["#16213e", "#0f3460"],
-    ["#23074d", "#cc5333"], ["#000428", "#004e92"], ["#004d7a", "#00bf72"],
-    ["#0f0c29", "#302b63"], ["#1cb5e0", "#000046"], ["#a5cc82", "#004d7a"],
-    ["#533483", "#e94560"], ["#24243e", "#1cb5e0"], ["#008793", "#a8eb12"]
-];
-
-async function generateFallbackImage(workDir, i) {
-    const imgPath = path.join(workDir, "fb" + i + ".jpg");
-    const [c0, c1] = FALLBACK_COLORS[i % FALLBACK_COLORS.length];
-    const mid = FALLBACK_COLORS[(i + 5) % FALLBACK_COLORS.length][0];
-    await runFF([
-        "-f", "lavfi", "-i",
-        "gradients=s=720x1280:c0=" + c0 + ":c1=" + mid + ":c2=" + c1,
-        "-frames:v", "1", "-q:v", "5",
-        "-y", imgPath
-    ]);
-    return imgPath;
+function makePrompt(scene, style) {
+    const base = scene.visual_prompt || scene.narasi.slice(0, 120);
+    const styles = [
+        base + ", digital illustration, cinematic lighting, 9:16",
+        "Professional illustration of " + base + ", vibrant colors, 4k, 9:16",
+        "Beautiful digital art, " + base + ", detailed, award winning, portrait 9:16",
+    ];
+    return styles[style % styles.length];
 }
 
 async function generateImages(scenes, workDir, onProgress) {
-    const genAI = getGenAI();
     const total = scenes.length;
     const imagePaths = [];
-    let useGemini = !!genAI;
 
-    let geminiModel = null;
-    if (genAI) {
-        geminiModel = genAI.getGenerativeModel({
-            model: "gemini-2.5-flash-image",
-            generationConfig: { temperature: 1, topK: 32, topP: 1, maxOutputTokens: 8192 }
-        });
-    }
+    onProgress("Bikin gambar via Pollinations...");
 
     for (let i = 0; i < total; i++) {
-        onProgress("Bikin gambar... (" + (i + 1) + "/" + total + ")");
-        const prompt = scenes[i].visual_prompt || "Illustration about: " + scenes[i].narasi.slice(0, 100);
-        const imgPath = path.join(workDir, "img" + i + ".jpg");
-        let imgBuf = null;
+        const sceneNo = i + 1;
+        let buf = null;
 
-        if (useGemini && geminiModel) {
-            try {
-                imgBuf = await generateImageFromGemini(geminiModel, prompt);
-                if (imgBuf) {
-                    fs.writeFileSync(imgPath, imgBuf);
-                    imagePaths.push(imgPath);
-                    if (i < total - 1 && GEMINI_COOLDOWN_MS > 0) await sleep(GEMINI_COOLDOWN_MS);
-                    continue;
-                }
-            } catch (e) {
-                if (e.status === 429) {
-                    onProgress("Gemini quota abis, pke Pollinations");
-                    useGemini = false;
-                } else {
-                    onProgress("Gemini error: " + (e.message || "").slice(0, 40) + ", fallback Pollinations");
-                }
+        for (let attempt = 1; attempt <= IMAGE_MAX_RETRIES_PER_SCENE; attempt++) {
+            const style = (attempt - 1) % 3;
+            const timeoutMs = attempt <= 3 ? 30000 : 60000;
+            if (attempt === 1) {
+                onProgress("Scene " + sceneNo + "/" + total + " - Lagi bikin gambar...");
+            }
+
+            buf = await generateImageFromPollinations(
+                makePrompt(scenes[i], style),
+                timeoutMs
+            ).catch(() => null);
+
+            if (buf) break;
+            if (attempt < IMAGE_MAX_RETRIES_PER_SCENE) {
+                await delay(IMAGE_RETRY_DELAY_MS);
             }
         }
 
-        try {
-            imgBuf = await generateImageFromPollinations(prompt);
-            if (imgBuf) {
-                fs.writeFileSync(imgPath, imgBuf);
-                imagePaths.push(imgPath);
-                continue;
-            }
-        } catch {}
+        if (!buf) {
+            throw new Error("Pollinations gagal untuk scene " + sceneNo + " setelah " + IMAGE_MAX_RETRIES_PER_SCENE + " percobaan");
+        }
 
-        onProgress("Gambar " + (i + 1) + " gagal, pke gradien");
-        const fallbackPath = await generateFallbackImage(workDir, i);
-        imagePaths.push(fallbackPath);
+        const imgPath = path.join(workDir, "img" + i + ".jpg");
+        fs.writeFileSync(imgPath, buf);
+        imagePaths.push(imgPath);
     }
 
     return imagePaths;
 }
 
 export async function generateVideo(topic, onProgress) {
-    if (activeJob) throw new Error("Video job sedang berjalan");
-    activeJob = true;
+    queueLength++;
+    
+    const task = videoQueue.then(async () => {
+        const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        const workDir = "/tmp/thirty-video-" + jobId;
+        fs.mkdirSync(workDir, { recursive: true });
+        fs.writeFileSync(path.join(workDir, ".active"), String(Date.now()));
 
-    const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    const workDir = "/tmp/thirty-video-" + jobId;
-    fs.mkdirSync(workDir, { recursive: true });
-    fs.writeFileSync(path.join(workDir, ".active"), String(Date.now()));
+        try {
+            onProgress("Nulis script...");
+            const data = await generateScript(topic.trim());
+            const total = data.scenes.length;
+            onProgress("Script jadi: " + data.title + " (" + total + " scene)");
+            enforceDuration(data.scenes);
+            const enforcedTotal = data.scenes.reduce((s, c) => s + (c.durasi_detik || 10), 0);
+            onProgress("Durasi: " + enforcedTotal + " detik");
 
-    try {
-        onProgress("Nulis script...");
-        const data = await generateScript(topic.trim());
-        const total = data.scenes.length;
-        onProgress("Script jadi: " + data.title + " (" + total + " scene)");
-        enforceDuration(data.scenes);
-        const enforcedTotal = data.scenes.reduce((s, c) => s + (c.durasi_detik || 10), 0);
-        onProgress("Durasi: " + enforcedTotal + " detik");
+            const imagePaths = await generateImages(data.scenes, workDir, onProgress);
 
-        const imagePaths = await generateImages(data.scenes, workDir, onProgress);
+            onProgress("Generate suara... (0/" + total + ")");
+            const audioPaths = [];
+            for (let i = 0; i < total; i++) {
+                const text = data.scenes[i].narasi || "";
+                const audioPath = path.join(workDir, "a" + i + ".mp3");
 
-        onProgress("Generate suara... (0/" + total + ")");
-        const audioPaths = [];
-        for (let i = 0; i < total; i++) {
-            const text = data.scenes[i].narasi || "";
-            const audioPath = path.join(workDir, "a" + i + ".mp3");
+                if (text.length <= 200) {
+                    const b64 = await getGoogleTtsBase64(text, { lang: "id" });
+                    fs.writeFileSync(audioPath, Buffer.from(b64, "base64"));
+                } else {
+                    const parts = await getAllGoogleTtsBase64(text, { lang: "id" });
+                    const audioBuffers = parts
+                        .map(p => p.base64)
+                        .filter(Boolean)
+                        .map(b64 => Buffer.from(b64, "base64"));
+                    fs.writeFileSync(audioPath, Buffer.concat(audioBuffers));
+                }
 
-            if (text.length <= 200) {
-                const b64 = await getAudioBase64(text, { lang: "id", slow: false });
-                fs.writeFileSync(audioPath, Buffer.from(b64, "base64"));
-            } else {
-                const parts = await getAllAudioBase64(text, { lang: "id", slow: false });
-                const audioBuffers = parts
-                    .map(p => p.base64)
-                    .filter(Boolean)
-                    .map(b64 => Buffer.from(b64, "base64"));
-                fs.writeFileSync(audioPath, Buffer.concat(audioBuffers));
+                audioPaths.push(audioPath);
+                onProgress("Generate suara... (" + (i + 1) + "/" + total + ")");
             }
 
-            audioPaths.push(audioPath);
-            onProgress("Generate suara... (" + (i + 1) + "/" + total + ")");
+            onProgress("Rakit video...");
+            const outputPath = path.join(workDir, "output.mp4");
+            await assembleVideo(data.scenes, imagePaths, audioPaths, workDir, outputPath);
+
+            const sizeMB = (fs.statSync(outputPath).size / 1024 / 1024).toFixed(1);
+            onProgress("Video siap! (" + sizeMB + "MB)");
+
+            try { fs.unlinkSync(path.join(workDir, ".active")); } catch {}
+            return { outputPath, workDir, title: data.title };
+        } catch (err) {
+            try { fs.unlinkSync(path.join(workDir, ".active")); } catch {}
+            cleanup(workDir);
+            throw err;
+        } finally {
+            queueLength--;
         }
+    });
 
-        onProgress("Rakit video...");
-        const outputPath = path.join(workDir, "output.mp4");
-        await assembleVideo(data.scenes, imagePaths, audioPaths, workDir, outputPath);
-
-        const sizeMB = (fs.statSync(outputPath).size / 1024 / 1024).toFixed(1);
-        onProgress("Video siap! (" + sizeMB + "MB)");
-
-        activeJob = false;
-        try { fs.unlinkSync(path.join(workDir, ".active")); } catch {}
-        return { outputPath, workDir, title: data.title };
-    } catch (err) {
-        try { fs.unlinkSync(path.join(workDir, ".active")); } catch {}
-        cleanup(workDir);
-        activeJob = false;
-        throw err;
-    }
+    videoQueue = task.catch(() => {});
+    return task;
 }
 
 function msToSrt(ms) {
@@ -310,7 +347,7 @@ async function assembleVideo(scenes, imagePaths, audios, workDir, outputPath) {
         const vf = [
             "scale=720*1.1:1280*1.1:force_original_aspect_ratio=increase,crop=720:1280",
             "zoompan=z='min(1+" + zoomStep + "*on," + zoomEnd + ")':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=" + frameCount + ":s=720x1280:fps=" + fps,
-            "subtitles=" + srtFile
+            "subtitles=" + srtFile + ":force_style='FontSize=15,Alignment=2,MarginV=65'"
         ].join(",");
 
         await runFF([
@@ -360,3 +397,4 @@ export function cleanupAll() {
         console.warn("Warning: Failed to cleanup /tmp:", err.message);
     }
 }
+

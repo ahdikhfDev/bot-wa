@@ -4,3 +4,10 @@ auth_session_link/
 logs/
 *.tar.gz
 *.sqlite
+.env
+.codex-backups/
+*.bak*
+*.old
+*.before-*
+temp_*
+stock-videos/

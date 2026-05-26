@@ -1,32 +1,63 @@
-import "dotenv/config";
+﻿import "dotenv/config";
 import { makeWASocket, useMultiFileAuthState, DisconnectReason } from "baileys";
 import P from "pino";
 import QRCode from "qrcode-terminal";
 import { handleMessage } from "./handlers/message.js";
-import { initDatabase, getPendingReminders, markReminderDone, broadcastTargets, loadPendingBroadcasts, deletePendingBroadcast, pendingBroadcasts } from "./services/db.js";
+import { initDatabase, flushDb, broadcastTargets, loadPendingBroadcasts, deletePendingBroadcast, pendingBroadcasts, getPendingReminders, incrementReminderRetry, expireOldReminders } from "./services/db.js";
 import { log, error } from "./utils/logger.js";
 import { loadSkills } from "./skills/_loader.js";
 import { startServer, setSock, incrementMessageCount, setBotStatus } from "./server/index.js";
 import { cleanupAll } from "./services/videoGenerator.js";
+import { createQueuedSock } from "./services/whatsappQueue.js";
+import { CONFIG } from "./config.js";
 
 const msgDedup = new Set();
 const DEDUP_WINDOW = 3000;
 
 const logger = P({ level: "info" }).child({ class: "Main" });
 let reconnectAttempts = 0;
+let appInitialized = false;
+let cleanupInterval = null;
+let reminderInterval = null;
 
-async function startBot() {
-    console.log("🚀 Starting WA Bot AI...\n");
-    console.log("🔄 Attempt: " + (reconnectAttempts + 1) + "\n");
+let signalHandlersRegistered = false;
+
+function exitBot(code = 0) {
+    flushDb();
+    process.exit(code);
+}
+
+async function initializeApp() {
+    if (appInitialized) return;
     await initDatabase();
     await loadSkills();
     startServer();
-    cleanupAll(); // Cleanup on startup
+    cleanupAll();
+    cleanupInterval = setInterval(cleanupAll, 6 * 60 * 60 * 1000);
+    registerSignalHandlers();
+    appInitialized = true;
+}
 
-    // Periodic cleanup every 6 hours
-    setInterval(() => {
-        cleanupAll();
-    }, 6 * 60 * 60 * 1000);
+function registerSignalHandlers() {
+    if (signalHandlersRegistered) return;
+    signalHandlersRegistered = true;
+    const shutdown = (signal) => {
+        console.log("\nðŸ‘‹ " + signal + " diterima. Bot mati.");
+        if (cleanupInterval) clearInterval(cleanupInterval);
+        if (reminderInterval) clearInterval(reminderInterval);
+        for (const [jid] of pendingBroadcasts) {
+            deletePendingBroadcast(jid);
+        }
+        exitBot(0);
+    };
+    process.once("SIGINT", () => shutdown("SIGINT"));
+    process.once("SIGTERM", () => shutdown("SIGTERM"));
+}
+
+async function startBot() {
+    console.log("ðŸš€ Starting WA Bot AI...\n");
+    console.log("ðŸ”„ Attempt: " + (reconnectAttempts + 1) + "\n");
+    await initializeApp();
 
     // Load session dari file auth
     const { state, saveCreds } = await useMultiFileAuthState("./auth_session");
@@ -37,6 +68,7 @@ async function startBot() {
         printQRInTerminal: false,
         generateHighQualityImage: true,
     });
+    const queuedSock = createQueuedSock(sock);
 
     // Save credentials setiap ada perubahan
     sock.ev.on("creds.update", saveCreds);
@@ -47,11 +79,11 @@ async function startBot() {
 
         if (qr) {
             console.clear();
-            console.log("📱 Scan QR ini dengan WhatsApp:\n");
+            console.log("ðŸ“± Scan QR ini dengan WhatsApp:\n");
             console.log("================================\n");
             QRCode.generate(qr, { small: true });
             console.log("\n================================\n");
-            console.log("WhatsApp → Setelan → Perangkat Tertaut → Tautkan Perangkat\n");
+            console.log("WhatsApp â†’ Setelan â†’ Perangkat Tertaut â†’ Tautkan Perangkat\n");
             reconnectAttempts = 0;
         }
 
@@ -63,33 +95,33 @@ async function startBot() {
                                lastDisconnect?.error?.output?.payload?.error === "replaced";
 
             if (isLoggedOut) {
-                console.log("🔒 Bot di-logout dari WhatsApp. Hapus folder auth_session dan scan ulang QR.");
-                process.exit(0);
+                console.log("ðŸ”’ Bot di-logout dari WhatsApp. Hapus folder auth_session dan scan ulang QR.");
+                exitBot(0);
             }
 
             if (isConflict) {
-                console.log("⚠️  CONFLICT: Nomor ini sedang aktif di tempat lain (WA Web / HP lain).");
-                console.log("💡 Tutup WhatsApp Web / perangkat lain yang pakai nomor ini, lalu restart bot.");
-                process.exit(0);
+                console.log("âš ï¸  CONFLICT: Nomor ini sedang aktif di tempat lain (WA Web / HP lain).");
+                console.log("ðŸ’¡ Tutup WhatsApp Web / perangkat lain yang pakai nomor ini, lalu restart bot.");
+                exitBot(0);
             }
 
             reconnectAttempts++;
             if (reconnectAttempts < 10) {
-                console.log("⚡ Koneksi terputus (attempt " + reconnectAttempts + "), retrying in 5s...");
-                setTimeout(startBot, 5000);
+                console.log("âš¡ Koneksi terputus (attempt " + reconnectAttempts + "), retrying in " + Math.round(CONFIG.reconnectDelayMs / 1000) + "s...");
+                setTimeout(startBot, CONFIG.reconnectDelayMs);
             } else {
-                console.log("❌ Tidak bisa terhubung ke WhatsApp");
-                console.log("💡 Tips:");
+                console.log("âŒ Tidak bisa terhubung ke WhatsApp");
+                console.log("ðŸ’¡ Tips:");
                 console.log("   - Matikan VPN");
                 console.log("   - Matikan Windows Firewall");
                 console.log("   - Pastikan internet stabil");
                 console.log("   - Hapus folder auth_session untuk reset\n");
-                process.exit(0);
+                exitBot(0);
             }
         } else if (connection === "open") {
-            console.log("✅ WhatsApp connected!\n");
+            console.log("âœ… WhatsApp connected!\n");
             reconnectAttempts = 0;
-            setSock(sock);
+            setSock(queuedSock);
             setBotStatus(true);
 
             // Load all groups for broadcast
@@ -99,25 +131,33 @@ async function startBot() {
                 for (const [jid, info] of Object.entries(groups)) {
                     broadcastTargets.set(jid, info.subject || "Tanpa nama");
                 }
-                console.log("📡 Broadcast: " + broadcastTargets.size + " grup terdaftar");
+                console.log("ðŸ“¡ Broadcast: " + broadcastTargets.size + " grup terdaftar");
                 loadPendingBroadcasts();
             } catch (err) {
-                console.warn("⚠️ Gagal load grup:", err.message);
+                console.warn("âš ï¸ Gagal load grup:", err.message);
             }
 
-            // Start Auto-Reminder Polling
-            setInterval(async () => {
-                const pending = getPendingReminders();
-                for (const r of pending) {
-                    try {
-                        await sock.sendMessage(r.chatId, { text: "⏰ *THIRTY REMINDER* ⏰\n\nHai bos! Sesuai jadwal, aku mau ngingetin kamu soal ini:\n\n👉 *" + r.message + "*" });
-                        markReminderDone(r.id);
-                        console.log("🔔 Reminder terkirim ke " + r.chatId + ": " + r.message);
-                    } catch (err) {
-                        console.error("❌ Gagal kirim reminder:", err.message);
+            // Reminder polling tiap 15 detik
+            if (reminderInterval) clearInterval(reminderInterval);
+            reminderInterval = setInterval(async () => {
+                try {
+                    const pending = getPendingReminders();
+                    for (const r of pending) {
+                        try {
+                            const retryLabel = r.retryCount > 0 ? ` (${r.retryCount + 1}/3)` : '';
+                            await queuedSock.sendMessage(r.chatId, {
+                                text: `⏰ *REMINDER* ⏰${retryLabel}\n\n${r.message}`
+                            });
+                            incrementReminderRetry(r.id);
+                        } catch (err) {
+                            console.error('âŒ Gagal kirim reminder:', err.message);
+                        }
                     }
+                    expireOldReminders();
+                } catch (err) {
+                    console.error('âŒ Reminder polling error:', err.message);
                 }
-            }, 30000); // Cek setiap 30 detik
+            }, 15000);
         }
     });
 
@@ -137,22 +177,13 @@ async function startBot() {
             log("MSG", "Dari " + (msg.pushName || "Unknown"), { id: dedupKey });
 
             incrementMessageCount();
-            await handleMessage(sock, msg).catch(err => {
+            await handleMessage(queuedSock, msg).catch(err => {
                 error("Gagal handle message", err);
             });
         }
     });
-
-    // Cleanup on exit
-    function shutdown(signal) {
-        console.log("\n👋 " + signal + " diterima. Bot mati.");
-        for (const [jid] of pendingBroadcasts) {
-            deletePendingBroadcast(jid);
-        }
-        process.exit(0);
-    }
-    process.on("SIGINT", () => shutdown("SIGINT"));
-    process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 startBot().catch(console.error);
+
+

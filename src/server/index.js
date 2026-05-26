@@ -90,11 +90,14 @@ export function setSock(sock) {
 // Known API keys for the dashboard
 const KNOWN_API_KEYS = [
     { key: 'GROQ_API_KEY', label: 'Groq', provider: 'groq', docs: 'https://console.groq.com/keys' },
+    { key: 'GEMINI_API_KEY', label: 'Gemini (Google)', provider: 'gemini', docs: 'https://aistudio.google.com/app/apikey' },
+    { key: 'ANTHROPIC_API_KEY', label: 'Anthropic (Claude)', provider: 'anthropic', docs: 'https://console.anthropic.com/settings/keys' },
     { key: '9ROUTER_API_KEY', label: '9Router', provider: '9router', docs: 'https://ai.akf.biz.id/dashboard' },
     { key: 'TAVILY_API_KEY', label: 'Tavily (Search)', provider: 'tavily', docs: 'https://app.tavily.com/home' },
+    { key: 'GNEWS_API_KEY', label: 'GNews', provider: 'gnews', docs: 'https://gnews.io/' },
 ];
 
-const SENSITIVE_KEYS = ['GROQ_API_KEY', '9ROUTER_API_KEY', 'TAVILY_API_KEY', 'dashboard_token', 'dashboard_password'];
+const SENSITIVE_KEYS = ['GROQ_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', '9ROUTER_API_KEY', 'TAVILY_API_KEY', 'GNEWS_API_KEY', 'dashboard_token', 'dashboard_password'];
 
 export function startServer() {
     // Set initial password on first run from env or random fallback
@@ -117,7 +120,7 @@ export function startServer() {
     botStatus.totalCumulative = parseInt(getSetting('stats_total_cumulative', '0'));
 
     // Seed env vars to DB so web dashboard can see/manage them
-        const envToSeed = ['GROQ_API_KEY', 'GROQ_MODEL', 'TAVILY_API_KEY', '9ROUTER_API_KEY'];
+    const envToSeed = ['GROQ_API_KEY', 'GROQ_MODEL', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'TAVILY_API_KEY', 'GNEWS_API_KEY', '9ROUTER_API_KEY'];
     for (const key of envToSeed) {
         if (process.env[key] && !getSetting(key)) {
             setSetting(key, process.env[key]);
@@ -299,7 +302,7 @@ export function startServer() {
         if (!known) return res.status(400).json({ error: 'Unknown API key' });
         if (value && value.length < 8) return res.status(400).json({ error: 'API key terlalu pendek' });
         setSetting(key, value || '');
-        const aiKeys = ['GROQ_API_KEY', '9ROUTER_API_KEY', 'TAVILY_API_KEY'];
+        const aiKeys = ['GROQ_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', '9ROUTER_API_KEY', 'TAVILY_API_KEY'];
         if (aiKeys.includes(key)) {
             reloadAI();
         }
@@ -321,6 +324,20 @@ export function startServer() {
                 const data = await resp.json();
                 const count = (data.data || []).filter(m => m.active).length;
                 return res.json({ success: true, message: `✅ Groq: ${count} model aktif tersedia` });
+            }
+            if (key === 'GEMINI_API_KEY') {
+                const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+                if (!resp.ok) return res.json({ success: false, error: `Gemini: ${resp.status} ${resp.statusText}` });
+                return res.json({ success: true, message: '✅ Gemini API key valid' });
+            }
+            if (key === 'ANTHROPIC_API_KEY') {
+                const resp = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST',
+                    headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+                    body: JSON.stringify({ model: 'claude-3-haiku-20240307', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] })
+                });
+                if (resp.status === 400 || resp.ok) return res.json({ success: true, message: '✅ Anthropic API key valid' });
+                return res.json({ success: false, error: `Anthropic: ${resp.status} ${resp.statusText}` });
             }
             if (key === '9ROUTER_API_KEY') {
                 const resp = await fetch('https://ai.akf.biz.id/v1/models', {
@@ -358,13 +375,13 @@ export function startServer() {
     // ==================== API: AI PROVIDER TOGGLE ====================
 app.get('/api/provider', (req, res) => {
     const provider = getSetting('AI_PROVIDER') || 'groq';
-    res.json({ provider, options: ['groq', '9router'] });
+    res.json({ provider, options: ['groq', 'gemini', 'anthropic', '9router'] });
 });
 
 app.post('/api/provider', (req, res) => {
     const { provider } = req.body;
-    if (!['groq', '9router'].includes(provider)) {
-        return res.status(400).json({ error: "Provider harus groq atau 9router" });
+    if (!['groq', 'gemini', 'anthropic', '9router'].includes(provider)) {
+        return res.status(400).json({ error: "Provider harus groq, gemini, anthropic, atau 9router" });
     }
     setSetting('AI_PROVIDER', provider);
     reloadAI();

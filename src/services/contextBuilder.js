@@ -1,4 +1,5 @@
-import { getGroupHistory, getConversationSummary, getUserProfile, searchMemoriesRAG } from './db.js';
+import { getGroupHistory, getConversationSummary, getUserProfile, searchMemoriesRAG, getSetting, saveConversationSummary } from './db.js';
+import Groq from 'groq-sdk';
 
 const MAX_HISTORY_TOKENS = 2500;
 const MAX_CONTEXT_TOKENS = 4000;
@@ -13,7 +14,7 @@ function formatHistoryForContext(messages) {
     return messages.map(m => `[${m.sender}]: ${m.message}`).join('\n');
 }
 
-export function buildContext(chatId, prompt) {
+export function buildContext(chatId, prompt, includeHistoryInText = true) {
     const parts = [];
     let totalTokens = 0;
 
@@ -21,7 +22,7 @@ export function buildContext(chatId, prompt) {
     const profile = chatId ? getUserProfile(chatId) : null;
     if (profile && profile.facts && profile.facts.length > 0) {
         const factText = profile.facts.slice(0, 8).join('; ');
-        const block = `📋 *Profil User:* ${factText}`;
+        const block = `[user profile] ${factText}`;
         parts.push({ type: 'profile', text: block });
         totalTokens += estimateTokens(block);
     }
@@ -31,7 +32,7 @@ export function buildContext(chatId, prompt) {
     if (chatId) {
         summary = getConversationSummary(chatId);
         if (summary) {
-            const block = `📝 *Ringkasan percakapan:* ${summary}`;
+            const block = `(lampiran - ${summary})`;
             parts.push({ type: 'summary', text: block });
             totalTokens += estimateTokens(block);
         }
@@ -45,35 +46,41 @@ export function buildContext(chatId, prompt) {
         } catch {}
     }
     if (memories.length > 0) {
-        const memText = memories.map((m, i) => `${i + 1}. ${m.content}`).join('\n');
-        const block = `🧠 *Yang kamu ingat:*\n${memText}`;
+        const memText = memories.map((m, i) => `- ${m.content}`).join('\n');
+        const block = `[referensi]\n${memText}`;
         parts.push({ type: 'memories', text: block });
         totalTokens += estimateTokens(block);
     }
 
     // 4. Recent history (load more, trim by token budget)
-    let history = chatId ? getGroupHistory(chatId, 20) : [];
+    let history = chatId ? getGroupHistory(chatId, 25) : []; // Load a bit more to allow for duplication check
+
+    // Deduplication check: if current message is already in history, remove it
+    // (Happens because handleMessage adds to DB before calling chatWithContext)
+    if (history.length > 0) {
+        const lastMsg = history[history.length - 1];
+        if (lastMsg && (prompt === lastMsg.message || prompt.endsWith(lastMsg.message))) {
+            history.pop();
+        }
+    }
+
     const historyBudget = MAX_HISTORY_TOKENS - Math.min(totalTokens, 1000);
 
-    // Format history reverse for display (newest last matches prompt flow)
+    // Format history (oldest first, newest last)
     let formattedHistory = '';
     let trimmedCount = 0;
 
     if (history.length > 0) {
-        formattedHistory = formatHistoryForContext(history);
-        let histTokens = estimateTokens(formattedHistory);
-
         // Trim oldest messages if over budget
-        while (histTokens > historyBudget && history.length > 3) {
+        while (estimateTokens(formatHistoryForContext(history)) > historyBudget && history.length > 3) {
             history.shift();
-            formattedHistory = formatHistoryForContext(history);
-            histTokens = estimateTokens(formattedHistory);
             trimmedCount++;
         }
 
-        if (formattedHistory) {
+        formattedHistory = formatHistoryForContext(history);
+        if (formattedHistory && includeHistoryInText) {
             parts.push({ type: 'history', text: formattedHistory });
-            totalTokens += histTokens;
+            totalTokens += estimateTokens(formattedHistory);
         }
     }
 
@@ -95,8 +102,6 @@ export function buildContext(chatId, prompt) {
 // Async: summarize conversation after response
 export async function summarizeConversationAsync(chatId) {
     if (!chatId) return;
-    const { default: Groq } = await import('groq-sdk');
-    const { getSetting } = await import('./db.js');
     const apiKey = getSetting('GROQ_API_KEY') || process.env.GROQ_API_KEY;
     if (!apiKey || apiKey.startsWith('gsk_') && apiKey.length < 20) return;
 
@@ -122,7 +127,6 @@ export async function summarizeConversationAsync(chatId) {
 
         const summary = completion.choices[0]?.message?.content?.trim();
         if (summary && summary.length > 20) {
-            const { saveConversationSummary } = await import('./db.js');
             saveConversationSummary(chatId, summary, history.length);
             console.log(`📝 Summary saved for ${chatId}: ${summary.substring(0, 80)}...`);
         }

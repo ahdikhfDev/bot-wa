@@ -1,5 +1,6 @@
 import fs from 'fs';
 import { getStocks, getStockById } from '../services/db.js';
+import { CONFIG } from '../config.js';
 
 export default {
   name: 'stock',
@@ -21,9 +22,14 @@ export default {
         await sock.sendMessage(remoteJid, { text: 'Stock tidak ditemukan.' });
         return;
       }
+      const stat = fs.statSync(stock.video_path);
+      if (stat.size > CONFIG.maxStockVideoBytes) {
+        await sock.sendMessage(remoteJid, { text: 'Video terlalu besar untuk dikirim lewat WhatsApp.' });
+        return;
+      }
       const caption = stock.caption + '\n\n' + (Array.isArray(stock.tags) ? stock.tags.join(' ') : '');
       await sock.sendMessage(remoteJid, {
-        video: fs.readFileSync(stock.video_path),
+        video: { url: stock.video_path },
         caption: caption,
       });
       return;
