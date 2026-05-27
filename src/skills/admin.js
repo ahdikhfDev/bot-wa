@@ -12,7 +12,7 @@ export default {
         const { command, mentionedJids } = context;
 
         if (command === 'allow') {
-            let targetJid = remoteJid;
+            let targetJid;
             let displayName = '';
 
             if (mentionedJids.length > 0) {
@@ -24,6 +24,10 @@ export default {
                     targetJid = `${num}@s.whatsapp.net`;
                     displayName = args.slice(1).join(' ');
                 }
+            } else {
+                // Default: whitelist sender (owner) instead of remoteJid (which could be a group)
+                targetJid = context.msg?.key?.participant || context.msg?.key?.remoteJid;
+                displayName = targetJid.split('@')[0];
             }
 
             if (!displayName) displayName = targetJid.split('@')[0];

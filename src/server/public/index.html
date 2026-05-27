@@ -355,8 +355,11 @@ label { font-size: 12px; color: var(--text-2); font-weight: 500; display: block;
       <button class="nav-item" data-tab="skills"><i data-lucide="blocks" width="18" height="18"></i>Skills</button>
       <button class="nav-item" data-tab="whitelist"><i data-lucide="users" width="18" height="18"></i>Whitelist</button>
       <button class="nav-item" data-tab="persona"><i data-lucide="user-cog" width="18" height="18"></i>Persona</button>
+      <button class="nav-item" data-tab="memories"><i data-lucide="brain" width="18" height="18"></i>Memories</button>
+      <button class="nav-item" data-tab="reminders"><i data-lucide="bell" width="18" height="18"></i>Reminders</button>
+      <button class="nav-item" data-tab="jadwal"><i data-lucide="calendar" width="18" height="18"></i>Jadwal</button>
+      <button class="nav-item" data-tab="context"><i data-lucide="message-square-text" width="18" height="18"></i>Chat History</button>
       <button class="nav-item" data-tab="profiles"><i data-lucide="file-text" width="18" height="18"></i>Profiles</button>
-      <button class="nav-item" data-tab="tiktok"><i data-lucide="music" width="18" height="18"></i>TikTok</button>
       <button class="nav-item" data-tab="stock"><i data-lucide="video" width="18" height="18"></i>Stock</button>
       <button class="nav-item" data-tab="settings"><i data-lucide="settings" width="18" height="18"></i>Settings</button>
     </nav>
@@ -556,39 +559,17 @@ async function renderTab(tab) {
       case 'skills': await renderSkills(); break;
       case 'whitelist': await renderWhitelist(); break;
       case 'persona': await renderPersona(); break;
+      case 'memories': await renderMemories(); break;
+      case 'reminders': await renderReminders(); break;
+      case 'jadwal': await renderJadwal(); break;
+      case 'context': await renderContext(); break;
       case 'profiles': await renderProfiles(); break;
-      case 'tiktok': await renderTikTok(); break;
       case 'stock': await renderStock(); break;
       case 'settings': await renderSettings(); break;
     }
   } catch (e) {
     el.innerHTML = emptyState('alert-circle', 'Error: ' + e.message);
   }
-}
-
-// ==================== TIKTOK TAB ====================
-async function renderTikTok() {
-  const el = document.getElementById('tabContent');
-  el.innerHTML = `
-    <div class="section-header">
-      <div class="section-title"><i data-lucide="music" width="20" height="20"></i>TikTok Manager</div>
-    </div>
-    <div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));gap:20px">
-      <div class="card">
-        <h3 style="font-size:16px;margin-bottom:12px">Web Login</h3>
-        <p class="text-sm text-subtle mb-4">Login TikTok via browser (Playwright) untuk ambil cookies otomatis.</p>
-        <a href="/tiktok-login" target="_blank" class="btn btn-primary w-full mb-2">Buka Halaman Login</a>
-        <button class="btn btn-ghost w-full" onclick="api('/tiktok-logout').then(() => toast('Login closed', 'info'))">Tutup Sesi Login</button>
-      </div>
-      <div class="card">
-        <h3 style="font-size:16px;margin-bottom:12px">Cookie Manager</h3>
-        <p class="text-sm text-subtle mb-4">Input cookies manual atau hapus cookies yang tersimpan.</p>
-        <a href="/tiktok-cookies" target="_blank" class="btn btn-ghost w-full mb-2">Buka Cookie Manager</a>
-        <button class="btn btn-danger w-full" onclick="api('/api/tiktok/delete-cookies', {method:'POST'}).then(() => toast('Cookies dihapus', 'info'))">Hapus Semua Cookies</button>
-      </div>
-    </div>
-  `;
-  setTimeout(() => lucide.createIcons(), 50);
 }
 
 // ==================== STOCK TAB ====================
@@ -1314,6 +1295,310 @@ async function renderProfiles() {
   document.getElementById('tabContent').innerHTML = html;
 }
 
+// ==================== MEMORIES TAB ====================
+async function renderMemories() {
+  const el = document.getElementById('tabContent');
+  let html = `<div class="section-header">
+    <div class="section-title"><i data-lucide="brain" width="20" height="20"></i>AI Memories</div>
+    <div class="section-actions">
+      <button class="btn btn-sm btn-ghost" onclick="showMemorySearch()"><i data-lucide="search" width="14" height="14"></i> Cari</button>
+    </div>
+  </div>
+  <p class="text-sm text-subtle mb-4">Long-term memory yang dipelajari AI dari percakapan (auto-learning tiap 8 interaksi).
+  <div class="form-row mb-3">
+    <input type="text" id="memGroupId" placeholder="Group ID / Chat ID (default: all)" value="">
+    <button class="btn btn-sm btn-primary" onclick="renderMemories()">Load</button>
+  </div>`;
+
+  // Try to fetch memories
+  const groupId = document.getElementById('memGroupId')?.value?.trim() || '';
+  const queryStr = groupId ? `?group_id=${encodeURIComponent(groupId)}&limit=30` : '';
+  const data = await api('/api/memories' + queryStr);
+  const memories = data?.memories || [];
+
+  if (!memories.length) {
+    html += emptyState('brain', 'Belum ada memory yang tersimpan.');
+  } else {
+    html += `<div class="table-wrap"><table><thead><tr><th>#</th><th>Group</th><th>Content</th><th>Category</th><th>Confidence</th></tr></thead><tbody>`;
+    memories.forEach((m, i) => {
+      const content = (m.content || '').substring(0, 120);
+      const groupShort = (m.group_id || '').replace('@s.whatsapp.net', '').replace('@g.us', '');
+      html += `<tr>
+        <td class="text-xs text-subtle">${i + 1}</td>
+        <td class="text-xs font-mono text-subtle" title="${m.group_id}">${groupShort.substring(0, 16)}...</td>
+        <td style="max-width:350px"><span class="text-sm">${content}${(m.content || '').length > 120 ? '...' : ''}</span></td>
+        <td><span class="tag">${m.category || 'general'}</span></td>
+        <td><span class="tag">${m.confidence || 1}/10</span></td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+    html += `<div class="text-xs text-subtle mt-2">${memories.length} memories ditampilkan</div>`;
+  }
+
+  el.innerHTML = html;
+  setTimeout(() => lucide.createIcons(), 50);
+}
+
+function showMemorySearch() {
+  const modal = showModal(`
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header"><div class="modal-title"><i data-lucide="search" width="18" height="18"></i> Cari Memory</div>
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+      <div class="form-group"><label>Group ID</label><input id="ms-group" placeholder="Group JID"></div>
+      <div class="form-group"><label>Kata Kunci</label><input id="ms-query" placeholder="Cari..." onkeydown="if(event.key==='Enter') doMemorySearch()"></div>
+      <div id="ms-results" class="text-sm" style="margin-top:12px"></div>
+      <div class="modal-footer"><button class="btn btn-primary" onclick="doMemorySearch()">Cari</button></div>
+    </div>
+  `);
+}
+
+async function doMemorySearch() {
+  const groupId = document.getElementById('ms-group').value.trim();
+  const query = document.getElementById('ms-query').value.trim();
+  if (!groupId || !query) { toast('Isi Group ID dan kata kunci', 'warning'); return; }
+  const res = await api('/api/memories/search', {
+    method: 'POST',
+    body: JSON.stringify({ group_id: groupId, query, limit: 10 })
+  });
+  const results = res?.results || [];
+  const el = document.getElementById('ms-results');
+  if (!results.length) {
+    el.innerHTML = '<span class="text-subtle">Tidak ada hasil</span>';
+  } else {
+    el.innerHTML = '<div style="border-top:1px solid var(--border);padding-top:8px"></div>' +
+      results.map((r, i) => `<div style="padding:6px 0;border-bottom:1px solid var(--border)">
+        <div class="text-xs text-subtle">#${i + 1} (skor: ${(r._ragScore || 0).toFixed(1)})</div>
+        <div class="text-sm">${(r.content || '').substring(0, 200)}</div>
+      </div>`).join('');
+  }
+}
+
+// ==================== REMINDERS TAB ====================
+async function renderReminders() {
+  const el = document.getElementById('tabContent');
+  let html = `<div class="section-header">
+    <div class="section-title"><i data-lucide="bell" width="20" height="20"></i>Reminders</div>
+  </div>
+  <div class="form-row mb-3">
+    <input type="text" id="remChatId" placeholder="Chat ID (nomor@domain)" value="">
+    <button class="btn btn-sm btn-primary" onclick="renderReminders()">Load</button>
+  </div>`;
+
+  const chatId = document.getElementById('remChatId')?.value?.trim() || '';
+  if (!chatId) {
+    html += `<div class="card">
+      <p class="text-sm text-subtle">Masukkan Chat ID untuk melihat reminder. Contoh: <code style="background:var(--bg);padding:2px 6px;border-radius:4px">628xxx@s.whatsapp.net</code></p>
+      <p class="text-xs text-subtle mt-2">Gunakan command <code>/reminder list</code> di WhatsApp untuk melihat reminder milikmu.</p>
+    </div>`;
+    el.innerHTML = html;
+    setTimeout(() => lucide.createIcons(), 50);
+    return;
+  }
+
+  const data = await api(`/api/reminders?chat_id=${encodeURIComponent(chatId)}`);
+  const reminders = data?.reminders || [];
+
+  if (!reminders.length) {
+    html += emptyState('bell-off', 'Tidak ada reminder untuk chat ini.');
+  } else {
+    html += `<div class="table-wrap"><table><thead><tr><th>#</th><th>Waktu</th><th>Pesan</th><th>Status</th><th>Aksi</th></tr></thead><tbody>`;
+    reminders.forEach((r, i) => {
+      const date = new Date(r.triggerTime).toLocaleString('id-ID');
+      const icon = r.status === 'done' ? '✅' : r.status === 'expired' ? '⌛' : r.retryCount > 0 ? '🔔' : '⏳';
+      html += `<tr>
+        <td class="text-xs text-subtle">${i + 1}</td>
+        <td class="text-sm">${date}</td>
+        <td>${r.message}</td>
+        <td>${icon} ${r.status}</td>
+        <td><button class="btn btn-xs btn-danger" onclick="deleteReminderAPI(${r.id})">Hapus</button></td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
+
+  el.innerHTML = html;
+  setTimeout(() => lucide.createIcons(), 50);
+}
+
+async function deleteReminderAPI(id) {
+  const r = await api('/api/reminders/' + id, { method: 'DELETE' });
+  if (r?.success) { toast('Reminder dihapus', 'success'); renderReminders(); }
+}
+
+// ==================== JADWAL TAB ====================
+async function renderJadwal() {
+  const el = document.getElementById('tabContent');
+  let html = `<div class="section-header">
+    <div class="section-title"><i data-lucide="calendar" width="20" height="20"></i>Jadwal Grup</div>
+  </div>
+  <div class="form-row mb-3">
+    <input type="text" id="jadwalGroupId" placeholder="Group ID" value="">
+    <button class="btn btn-sm btn-primary" onclick="renderJadwal()">Load</button>
+  </div>`;
+
+  const groupId = document.getElementById('jadwalGroupId')?.value?.trim() || '';
+  if (!groupId) {
+    html += `<div class="card">
+      <p class="text-sm text-subtle">Masukkan Group ID untuk melihat jadwal kegiatan grup.</p>
+      <p class="text-xs text-subtle mt-2">Gunakan command <code>/jadwal list</code> di grup WhatsApp untuk melihat jadwal.</p>
+    </div>`;
+    el.innerHTML = html;
+    setTimeout(() => lucide.createIcons(), 50);
+    return;
+  }
+
+  const data = await api(`/api/jadwal?group_id=${encodeURIComponent(groupId)}`);
+  const items = data?.jadwal || [];
+
+  if (!items.length) {
+    html += emptyState('calendar-x', 'Belum ada jadwal untuk grup ini.');
+  } else {
+    html += `<div class="table-wrap"><table><thead><tr><th>#</th><th>Tanggal</th><th>Kegiatan</th></tr></thead><tbody>`;
+    items.forEach((item, i) => {
+      html += `<tr>
+        <td class="text-xs text-subtle">${i + 1}</td>
+        <td class="text-sm">${item.tanggal || '-'}</td>
+        <td>${item.event || ''}</td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
+
+  el.innerHTML = html;
+  setTimeout(() => lucide.createIcons(), 50);
+}
+
+// ==================== CHAT HISTORY (CONTEXT) TAB ====================
+async function renderContext() {
+  const el = document.getElementById('tabContent');
+  let html = `<div class="section-header">
+    <div class="section-title"><i data-lucide="message-square-text" width="20" height="20"></i>Chat History</div>
+    <div class="section-actions">
+      <button class="btn btn-sm btn-danger" onclick="clearGroupContext()"><i data-lucide="trash-2" width="14" height="14"></i> Hapus</button>
+    </div>
+  </div>
+  <div class="form-row mb-3">
+    <input type="text" id="ctxGroupId" placeholder="Group ID" value="">
+    <input type="number" id="ctxLimit" placeholder="Limit" value="20" style="max-width:80px">
+    <button class="btn btn-sm btn-primary" onclick="renderContext()">Load</button>
+  </div>`;
+
+  const groupId = document.getElementById('ctxGroupId')?.value?.trim() || '';
+  const limit = parseInt(document.getElementById('ctxLimit')?.value) || 20;
+
+  if (!groupId) {
+    html += emptyState('message-square', 'Masukkan Group ID untuk melihat riwayat chat.');
+    el.innerHTML = html;
+    setTimeout(() => lucide.createIcons(), 50);
+    return;
+  }
+
+  const data = await api(`/api/context?group_id=${encodeURIComponent(groupId)}&limit=${limit}`);
+  const messages = data?.messages || [];
+
+  if (!messages.length) {
+    html += emptyState('message-square-off', 'Belum ada riwayat chat untuk grup ini.');
+  } else {
+    html += `<div class="card" style="max-height:500px;overflow-y:auto;padding:12px">`;
+    messages.forEach((m, i) => {
+      const sender = m.sender || 'Unknown';
+      const msg = (m.message || '').substring(0, 300);
+      const time = m.timestamp || '';
+      const isBot = sender.toLowerCase().includes('thirty') || sender.toLowerCase().includes('bot');
+      html += `<div style="padding:8px 10px;margin-bottom:6px;border-radius:8px;background:${isBot ? 'var(--surface-2)' : 'var(--bg)'};border-left:3px solid ${isBot ? 'var(--accent)' : 'var(--border)'}">
+        <div style="display:flex;justify-content:space-between;margin-bottom:2px">
+          <span style="font-weight:600;font-size:12px;color:${isBot ? 'var(--accent)' : 'var(--text-2)'}">${isBot ? '🤖' : '👤'} ${sender}</span>
+          <span class="text-xs text-subtle">${time}</span>
+        </div>
+        <div class="text-sm" style="white-space:pre-wrap">${msg}</div>
+      </div>`;
+    });
+    html += `</div>`;
+    html += `<div class="text-xs text-subtle mt-2">${messages.length} pesan</div>`;
+  }
+
+  el.innerHTML = html;
+  setTimeout(() => lucide.createIcons(), 50);
+}
+
+async function clearGroupContext() {
+  const groupId = document.getElementById('ctxGroupId')?.value?.trim();
+  if (!groupId) { toast('Masukkan Group ID dulu', 'warning'); return; }
+  if (!confirm('Hapus semua riwayat chat untuk grup ini?')) return;
+  const r = await api('/api/context', { method: 'DELETE', body: JSON.stringify({ group_id: groupId }) });
+  if (r?.success) { toast('Riwayat chat dihapus', 'success'); renderContext(); }
+}
+
+// ==================== SSE: REAL-TIME SYNC ====================
+let sseSource = null;
+
+function startSSE() {
+  if (sseSource) { sseSource.close(); }
+  sseSource = new EventSource(API + '/api/events?token=' + encodeURIComponent(authToken));
+  
+  sseSource.addEventListener('initial', function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      // Update status badge langsung dari data SSE
+      const badge = document.getElementById('statusBadge');
+      if (badge && data.connected !== undefined) {
+        badge.className = 'badge ' + (data.connected ? 'badge-green' : 'badge-red');
+        badge.innerHTML = '<span class="badge-dot"></span> ' + (data.connected ? 'Connected' : 'Disconnected');
+      }
+      // Update uptime display
+      if (data.uptime !== undefined) {
+        const h = Math.floor(data.uptime / 3600);
+        const m = Math.floor((data.uptime % 3600) / 60);
+        document.getElementById('uptimeDisplay').textContent = h + 'h ' + m + 'm';
+      }
+    } catch {}
+  });
+
+  sseSource.addEventListener('status', function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.messageCount === undefined) return;
+      // Update stat cards in-place (real-time sync)
+      const cards = document.querySelectorAll('.stat-card .stat-value');
+      cards.forEach(el => {
+        const label = el.closest('.stat-card')?.querySelector('.stat-label')?.textContent;
+        const fmt = v => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(1)+'K' : v;
+        if (label === 'Pesan Sesi' && data.messageCount !== undefined) {
+          el.innerHTML = fmt(data.messageCount);
+        }
+        if (label === 'Total Pesan' && data.totalCumulative !== undefined) {
+          el.innerHTML = fmt(data.totalCumulative);
+        }
+      });
+    } catch {}
+  });
+
+  sseSource.addEventListener('bot-status', function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      // Update status badge
+      if (data.connected !== undefined) {
+        const badge = document.getElementById('statusBadge');
+        if (badge) {
+          badge.className = 'badge ' + (data.connected ? 'badge-green' : 'badge-red');
+          badge.innerHTML = '<span class="badge-dot"></span> ' + (data.connected ? 'Connected' : 'Disconnected');
+        }
+      }
+      // Update uptime display in real-time
+      if (data.uptime !== undefined) {
+        const h = Math.floor(data.uptime / 3600);
+        const m = Math.floor((data.uptime % 3600) / 60);
+        document.getElementById('uptimeDisplay').textContent = h + 'h ' + m + 'm';
+      }
+    } catch {}
+  });
+
+  sseSource.onerror = function() {
+    // Reconnect after 3 seconds
+    setTimeout(startSSE, 3000);
+  };
+}
+
 // ==================== SETTINGS TAB ====================
 async function renderSettings() {
   const settings = await api('/api/settings');
@@ -1368,7 +1653,8 @@ async function init() {
   document.getElementById('loginOverlay').style.display = 'none';
   await updateStatusBar();
   await renderOverview();
-  setInterval(updateStatusBar, 10000);
+  startSSE();
+  setInterval(updateStatusBar, 30000);
   setTimeout(() => lucide.createIcons(), 100);
 }
 

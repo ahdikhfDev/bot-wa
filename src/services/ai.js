@@ -12,6 +12,7 @@ import { recordTokenUsage } from './db.js';
 export { recordTokenUsage };
 import { buildContext, summarizeConversationAsync } from './contextBuilder.js';
 import { extractFactsAsync } from './userProfile.js';
+import { searchWeb } from './search.js';
 
 // Use system ffmpeg on Linux (STB) for better compatibility, static on Windows
 const actualFfmpegPath = os.platform() === 'win32' ? ffmpegPath : 'ffmpeg';
@@ -152,10 +153,31 @@ const GLOBAL_RULES = `ATURAN GLOBAL:
 - Gunakan bahasa Indonesia santai (kecuali mode formal).
 - Singkat, padat, jangan bertele-tele.
 - WhatsApp gak render LaTeX, pakai teks biasa.
-- KAMU BISA MENCARI DI INTERNET (Web Search). Jika user minta cari sesuatu, kamu bisa melakukannya jika mereka menggunakan format: cari [query] atau /search [query]. Jika ditanya apakah bisa mencari real-time, jawab BISA.
+- KAMU BISA MENCARI DI INTERNET (Web Search). Kamu punya akses ke tool web_search. Gunakan jika user menanyakan info real-time, berita, cuaca, atau data terbaru yang tidak kamu ketahui.
 - KALAU USER GANTI TOPIK: langsung ikut. JANGAN sebut topik lama lagi.
 - Konteks/referensi dari lampiran cuma latar belakang. JANGAN disebut di jawaban kalo gak relevan.
 - Jangan tanya "tadi bahas X, sekarang Y?" — ikutin alur natural.`;
+
+const AI_TOOLS = [
+    {
+        type: "function",
+        function: {
+            name: "web_search",
+            description: "Cari informasi terbaru di internet (berita, harga crypto, cuaca, fakta real-time).",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: {
+                        type: "string",
+                        description: "Query pencarian yang spesifik (misal: 'harga btc hari ini', 'presiden amerika 2026').",
+                    },
+                },
+                required: ["query"],
+            },
+        },
+    },
+];
+
 
 export async function callAI(prompt, history = [], mode = 'asik', chatId = null, contextBlock = '') {
     try {
@@ -164,7 +186,7 @@ export async function callAI(prompt, history = [], mode = 'asik', chatId = null,
         const temperature = getModeTemperatures()[modeKey] ?? 0.85;
         const SYSTEM_PROMPT = `${personality}\n\n${GLOBAL_RULES}\n\n${contextBlock ? `(lampiran - ${contextBlock})` : ''}`;
 
-        const messages = [
+        let messages = [
             { role: 'system', content: SYSTEM_PROMPT },
             ...history,
             { role: 'user', content: prompt },
@@ -172,18 +194,68 @@ export async function callAI(prompt, history = [], mode = 'asik', chatId = null,
 
         const client = getGroqClient();
         const fbModels = getFallbackModels();
+        
         for (const model of fbModels) {
             try {
-                const completion = await client.chat.completions.create({ model, messages, max_tokens: 1024, temperature });
-                if (completion.usage) recordTokenUsage(completion.usage.prompt_tokens, completion.usage.completion_tokens, model);
-                return completion.choices[0]?.message?.content || 'Gak ada jawaban.';
+                let response = await client.chat.completions.create({
+                    model,
+                    messages,
+                    max_tokens: 1024,
+                    temperature,
+                    tools: AI_TOOLS,
+                    tool_choice: "auto",
+                });
+
+                if (response.usage) recordTokenUsage(response.usage.prompt_tokens, response.usage.completion_tokens, model);
+
+                let responseMessage = response.choices[0].message;
+                const toolCalls = responseMessage.tool_calls;
+
+                if (toolCalls) {
+                    messages.push(responseMessage);
+
+                    for (const toolCall of toolCalls) {
+                        if (toolCall.function.name === 'web_search') {
+                            const { query } = JSON.parse(toolCall.function.arguments);
+                            console.log(`🔍 AI calling web_search: "${query}"`);
+                            const searchResult = await searchWeb(query);
+                            
+                            let content;
+                            if (searchResult && searchResult.items) {
+                                content = searchResult.items.map(i => `Title: ${i.title}\nURL: ${i.url}\nSnippet: ${i.snippet}`).join('\n\n');
+                            } else {
+                                content = "Gak nemu apa-apa di internet.";
+                            }
+
+                            messages.push({
+                                tool_call_id: toolCall.id,
+                                role: "tool",
+                                name: "web_search",
+                                content: content,
+                            });
+                        }
+                    }
+
+                    const finalResponse = await client.chat.completions.create({
+                        model,
+                        messages,
+                        max_tokens: 1024,
+                        temperature,
+                    });
+
+                    if (finalResponse.usage) recordTokenUsage(finalResponse.usage.prompt_tokens, finalResponse.usage.completion_tokens, model);
+                    return finalResponse.choices[0]?.message?.content || 'Gak ada jawaban setelah search.';
+                }
+
+                return responseMessage.content || 'Gak ada jawaban.';
             } catch (err) {
                 if (err?.status === 401 || err?.status === 403) throw err;
-                console.warn(`⚠️ Model ${model} limit, coba lainnya...`);
+                console.warn(`⚠️ Model ${model} error/limit: ${err.message}`);
             }
         }
         return 'Semua model Groq lagi sibuk bos.';
     } catch (err) {
+        console.error('Groq callAI error:', err);
         return `Error: ${err.message}`;
     }
 }

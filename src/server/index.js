@@ -1,14 +1,14 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { getAllSkills, getSkill, setSkillEnabled, getSkillConfig, setSkillConfig, getAllSkillConfigs, getAllWhitelist, addWhitelist, removeWhitelist, getAllSettings, getSetting, setSetting, getTokenUsageSummary, resetTokenUsage, getAllCustomModes, getCustomMode, saveCustomMode, deleteCustomMode, getAllUserProfiles, getUserProfile, saveUserProfile, getStocks, getStockById, createStock, updateStock, deleteStock, getStockCount } from '../services/db.js';
+import { getAllSkills, getSkill, setSkillEnabled, getSkillConfig, setSkillConfig, getAllSkillConfigs, getAllWhitelist, addWhitelist, removeWhitelist, getAllSettings, getSetting, setSetting, getTokenUsageSummary, resetTokenUsage, getAllCustomModes, getCustomMode, saveCustomMode, deleteCustomMode, getAllUserProfiles, getUserProfile, saveUserProfile, getStocks, getStockById, createStock, updateStock, deleteStock, getStockCount, getMemories, searchMemories, clearMemories, getChatReminders, deleteReminder, getJadwal, getGroupHistory, clearGroupContext } from '../services/db.js';
 import { getSkillNames } from '../skills/_loader.js';
 import { reloadAI, fetchAvailableModels, getGroqClient, invalidateModeCache, getModel } from '../services/ai.js';
 import os from 'os';
 import { execSync } from 'child_process';
-import { hasCookies as tiktokHasCookies, startWebLogin, getWebLoginStatus, closeWebLogin, importCookies, deleteCookies } from "../services/tiktok.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.WEB_PORT || '6789');
@@ -43,7 +43,7 @@ function validateBearerToken(req) {
 
 function requireAuth(req, res, next) {
     const p = req.originalUrl;
-    if (p === '/api/auth/login' || p === '/api/auth/verify') {
+    if (p === '/api/auth/login' || p === '/api/auth/verify' || p === '/api/events') {
         return next();
     }
     // Allow public stock file downloads only when explicitly enabled
@@ -59,6 +59,15 @@ function requireAuth(req, res, next) {
 let botStatus = { connected: false, startTime: Date.now(), messageCount: 0, totalCumulative: 0, sessionStartTime: Date.now() };
 let sockRef = null;
 
+// SSE (Server-Sent Events) clients
+const sseClients = new Set();
+function broadcastSSE(event, data) {
+    const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const client of sseClients) {
+        try { client.write(msg); } catch { sseClients.delete(client); }
+    }
+}
+
 function initBotStats() {
     if (!getSetting('stats_first_start')) {
         setSetting('stats_first_start', String(Date.now()));
@@ -71,6 +80,7 @@ function initBotStats() {
 
 export function setBotStatus(connected) {
     botStatus.connected = connected;
+    broadcastSSE('bot-status', { connected, uptime: Math.floor((Date.now() - botStatus.startTime) / 1000) });
 }
 
 export function incrementMessageCount() {
@@ -81,6 +91,7 @@ export function incrementMessageCount() {
         setSetting('stats_total_messages', String(botStatus.messageCount));
         setSetting('stats_total_cumulative', String(botStatus.totalCumulative));
     }
+    broadcastSSE('status', { messageCount: botStatus.messageCount, totalCumulative: botStatus.totalCumulative });
 }
 
 export function setSock(sock) {
@@ -134,15 +145,34 @@ export function startServer() {
         setSetting('9ROUTER_API_KEY', oldKey);
         console.log('🔄 Migrated OPENAI_API_KEY → 9ROUTER_API_KEY');
     }
-    for (const key of envToSeed) {
-        if (process.env[key] && !getSetting(key)) {
-            setSetting(key, process.env[key]);
-            console.log(`🌱 Seeded ${key} from env to DB`);
-        }
-    }
 
     const app = express();
     app.use(express.json());
+
+    // Rate limiting untuk endpoint API
+    const apiLimiter = rateLimit({
+        windowMs: 15 * 60 * 1000, // 15 menit
+        max: 300, // max 300 request per window
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: 'Terlalu banyak request. Coba lagi nanti.' }
+    });
+
+    // Rate limiting lebih ketat untuk login
+    const authLimiter = rateLimit({
+        windowMs: 15 * 60 * 1000,
+        max: 10, // max 10 percobaan login per 15 menit
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: 'Terlalu banyak percobaan login. Coba lagi 15 menit lagi.' }
+    });
+
+    app.use('/api', (req, res, next) => {
+        // Skip rate limiting untuk SSE endpoint (koneksi long-lived)
+        if (req.path === '/events' && req.method === 'GET') return next();
+        apiLimiter(req, res, next);
+    });
+    app.use('/api/auth/login', authLimiter);
     app.use('/api', requireAuth);
     app.use(express.static(path.join(__dirname, 'public')));
 
@@ -592,126 +622,117 @@ app.post('/api/provider', (req, res) => {
         res.json({ success: true });
     });
 
-    // ==================== TIKTOK LOGIN ====================
-    app.get("/tiktok-login", async (req, res) => {
-        const result = await startWebLogin();
-        if (!result.qrBase64) {
-            return res.send("<html><body><h3>Gagal mendapatkan QR code</h3></body></html>");
+
+    // ==================== SSE: REAL-TIME EVENTS ====================
+    app.get('/api/events', (req, res) => {
+        // Validate token via query param (EventSource can't set custom headers)
+        const tokenParam = req.query.token;
+        if (!tokenParam || tokenParam !== getAuthToken()) {
+            res.status(401).json({ error: 'Unauthorized' });
+            return;
         }
-        res.send(`<!DOCTYPE html>
-<html><head><title>TikTok Login</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-body{background:#000;color:#fff;font-family:sans-serif;text-align:center;padding:20px}
-img{max-width:300px;border-radius:8px;margin:20px 0}
-.status{padding:12px;border-radius:8px;margin:10px}
-.waiting{background:#1a3a1a;border:1px solid #2a5a2a}
-.done{background:#0a2a0a;border:1px solid #0a5a0a}
-.error{background:#3a1a1a;border:1px solid #5a2a2a}
-.btn{background:#fff;color:#000;border:none;padding:10px 24px;border-radius:6px;cursor:pointer}
-</style></head><body>
-<h2>Login TikTok</h2>
-<p>1. Scan QR ini dengan aplikasi TikTok</p>
-<p>2. Buka TikTok > Profil > Icon Scan > Scan QR</p>
-<img src="${result.qrBase64}" alt="QR Code">
-<div id="status" class="status waiting">Menunggu scan...</div>
-<button class="btn" onclick="location.reload()">Refresh</button>
-<script>
-async function check() {
-    try {
-        const r = await fetch("/tiktok-login-status");
-        const d = await r.json();
-        const s = document.getElementById("status");
-        if (d.status === "completed") {
-            s.className = "status done";
-            s.textContent = "Login berhasil! Cookies tersimpan.";
-        } else if (d.status === "waiting") {
-            s.className = "status waiting";
-            s.textContent = "QR masih berlaku. Scan dengan TikTok...";
-            setTimeout(check, 2000);
-        } else {
-            s.className = "status error";
-            s.textContent = "Sesi login tidak aktif. Refresh halaman.";
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+        });
+        // Kirim status awal
+        const uptime = Math.floor((Date.now() - botStatus.startTime) / 1000);
+        res.write(`event: initial\ndata: ${JSON.stringify({ ...botStatus, uptime })}\n\n`);
+        sseClients.add(res);
+        req.on('close', () => sseClients.delete(res));
+    });
+
+    // ==================== API: MEMORIES ====================
+    app.get('/api/memories', (req, res) => {
+        try {
+            const groupId = req.query.group_id || '';
+            const limit = parseInt(req.query.limit) || 20;
+            const category = req.query.category || null;
+            const memories = getMemories(groupId, limit, category);
+            res.json({ memories, count: memories.length });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
         }
-    } catch { setTimeout(check, 3000); }
-}
-setTimeout(check, 2000);
-</script>
-</body></html>`);
-    });
-    app.get("/tiktok-login-status", (req, res) => {
-        const status = getWebLoginStatus();
-        res.json(status);
-    });
-    app.get("/tiktok-logout", (req, res) => {
-        closeWebLogin();
-        res.send("OK");
     });
 
-    // ==================== TIKTOK COOKIES ====================
-    app.get("/tiktok-cookies", (req, res) => {
-        const cookies = getSetting('tiktok_cookies');
-        res.send(`<!DOCTYPE html>
-<html><head><title>TikTok Cookies</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-body{background:#000;color:#fff;font-family:sans-serif;padding:20px;max-width:600px;margin:auto}
-h2{text-align:center}
-textarea{width:100%;height:300px;background:#111;color:#fff;border:1px solid #333;border-radius:6px;padding:10px;font-family:monospace;font-size:12px}
-.btn{background:#fff;color:#000;border:none;padding:10px 24px;border-radius:6px;cursor:pointer;margin:5px}
-.btn.danger{background:#3a1a1a;color:#fff;border:1px solid #5a2a2a}
-.status{padding:12px;border-radius:8px;margin:10px 0}
-.ok{background:#0a2a0a;border:1px solid #0a5a0a}
-.no{background:#3a1a1a;border:1px solid #5a2a2a}
-</style></head>
-<body>
-<h2>TikTok Cookie Manager</h2>
-<div id="status" class="status ${cookies ? 'ok' : 'no'}">${cookies ? 'Cookies tersimpan' : 'Belum ada cookies'}</div>
-<p>Cara dapat cookies TikTok:</p>
-<ol style="text-align:left">
-<li>Buka <b>tiktok.com</b> di browser computer</li>
-<li>Login akun TikTok kamu</li>
-<li>Buka DevTools (F12) > Application > Cookies > tiktok.com</li>
-<li>Klik kanan salah satu baris > <b>Copy All</b></li><li>Paste langsung di bawah (format tabel atau JSON)</li>
-</ol>
-<textarea id="cookieInput" placeholder="Paste cookies di sini (Copy All dari DevTools)...">${cookies || ''}</textarea>
-<br>
-<button class="btn" onclick="saveCookies()">Simpan Cookies</button>
-<button class="btn danger" onclick="deleteCookies()">Hapus Cookies</button>
-<script>
-async function saveCookies() {
-    const v = document.getElementById("cookieInput").value;
-    const r = await fetch("/api/tiktok/set-cookies", {
-        method: "POST",
-        headers: {"Content-Type":"application/json","Authorization":"Bearer "+localStorage.getItem("bot_wa_token")},
-        body: JSON.stringify({cookies: v})
-    });
-    const d = await r.json();
-    if (d.success) { document.getElementById("status").className = "status ok"; document.getElementById("status").textContent = "Cookies tersimpan!"; }
-    else { alert("Gagal: " + d.error); }
-}
-async function deleteCookies() {
-    const r = await fetch("/api/tiktok/delete-cookies", {
-        method: "POST",
-        headers: {"Authorization":"Bearer "+localStorage.getItem("bot_wa_token")}
-    });
-    const d = await r.json();
-    if (d.success) { document.getElementById("status").className = "status no"; document.getElementById("status").textContent = "Cookies dihapus"; document.getElementById("cookieInput").value = ""; }
-}
-</script>
-</body></html>`);
+    app.post('/api/memories/search', (req, res) => {
+        try {
+            const { group_id, query } = req.body || {};
+            if (!group_id || !query) return res.status(400).json({ error: 'group_id and query required' });
+            const results = searchMemories(group_id, query, parseInt(req.body.limit) || 5);
+            res.json({ results, count: results.length });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
     });
 
-    app.post('/api/tiktok/set-cookies', (req, res) => {
-        const { cookies } = req.body;
-        if (!cookies) return res.status(400).json({ error: 'cookies required' });
-        const ok = importCookies(cookies);
-        res.json({ success: ok, error: ok ? null : 'Format tidak dikenali. Coba paste dari DevTools (Copy All)' });
+    app.delete('/api/memories', (req, res) => {
+        try {
+            const { group_id } = req.body || {};
+            if (!group_id) return res.status(400).json({ error: 'group_id required' });
+            clearMemories(group_id);
+            res.json({ success: true });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
     });
 
-    app.post('/api/tiktok/delete-cookies', (req, res) => {
-        deleteCookies();
-        res.json({ success: true });
+    // ==================== API: REMINDERS ====================
+    app.get('/api/reminders', (req, res) => {
+        try {
+            const chatId = req.query.chat_id || '';
+            if (!chatId) return res.status(400).json({ error: 'chat_id required' });
+            const reminders = getChatReminders(chatId);
+            res.json({ reminders, count: reminders.length });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    app.delete('/api/reminders/:id', (req, res) => {
+        try {
+            deleteReminder(parseInt(req.params.id));
+            res.json({ success: true });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ==================== API: JADWAL ====================
+    app.get('/api/jadwal', (req, res) => {
+        try {
+            const groupId = req.query.group_id || '';
+            if (!groupId) return res.status(400).json({ error: 'group_id required' });
+            const items = getJadwal(groupId);
+            res.json({ jadwal: items, count: items.length });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ==================== API: GROUP CONTEXT HISTORY ====================
+    app.get('/api/context', (req, res) => {
+        try {
+            const groupId = req.query.group_id || '';
+            const limit = parseInt(req.query.limit) || 20;
+            if (!groupId) return res.status(400).json({ error: 'group_id required' });
+            const messages = getGroupHistory(groupId, limit);
+            res.json({ messages, count: messages.length });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    app.delete('/api/context', (req, res) => {
+        try {
+            const { group_id } = req.body || {};
+            if (!group_id) return res.status(400).json({ error: 'group_id required' });
+            clearGroupContext(group_id);
+            res.json({ success: true });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
     });
 
     // ==================== OPENAI-COMPATIBLE API ====================

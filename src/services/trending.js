@@ -1,4 +1,5 @@
 import { getStocks, getSetting } from './db.js';
+import { log } from '../utils/logger.js';
 
 let _cache = null;
 let _cacheTime = 0;
@@ -71,6 +72,52 @@ async function fetchTikTokTrending() {
   }
 }
 
+async function parseSubredditPosts(json, sourceLabel) {
+  const topics = [];
+  for (const child of (json.data?.children || [])) {
+    const post = child.data;
+    if (!post || post.over_18) continue;
+    const title = (post.title || '').trim();
+    if (!title || title.length < 5) continue;
+    topics.push({
+      topic: title.substring(0, 100),
+      hashtags: generateHashtags(title),
+      source: sourceLabel,
+      subreddit: post.subreddit,
+      ups: post.ups || 0,
+      url: `https://reddit.com${post.permalink}`,
+    });
+  }
+  return topics;
+}
+
+async function fetchRedditTrending() {
+  const results = await Promise.allSettled([
+    fetch('https://www.reddit.com/r/indonesia/hot.json?limit=15', {
+      headers: { 'User-Agent': 'ThirtyBot/2.0 (Community Assistant)' },
+      signal: AbortSignal.timeout(15000),
+    }).then(r => r.ok ? r.json() : []).then(j => parseSubredditPosts(j, 'reddit')),
+    fetch('https://www.reddit.com/r/technology/hot.json?limit=10', {
+      headers: { 'User-Agent': 'ThirtyBot/2.0 (Community Assistant)' },
+      signal: AbortSignal.timeout(10000),
+    }).then(r => r.ok ? r.json() : []).then(j => parseSubredditPosts(j, 'reddit_tech')),
+  ]);
+
+  const topics = [];
+  const seen = new Set();
+  for (const r of results) {
+    if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+      for (const t of r.value) {
+        if (!seen.has(t.topic)) {
+          seen.add(t.topic);
+          topics.push(t);
+        }
+      }
+    }
+  }
+  return topics.slice(0, 10);
+}
+
 function generateHashtags(text) {
   const words = text.toLowerCase().split(/[\s,]+/).filter(w => w.length > 3).slice(0, 3);
   const tags = words.map(w => '#' + w.replace(/[^a-z0-9]/g, ''));
@@ -91,12 +138,19 @@ export async function getTrendingTopics(refresh = false) {
     return _cache;
   }
 
-  const [googleTrends, tiktokTrends] = await Promise.all([
+  // Try all sources in parallel, with Reddit as backup
+  const sources = await Promise.allSettled([
     fetchGoogleTrends(),
     fetchTikTokTrending(),
+    fetchRedditTrending(),
   ]);
 
-  let topics = [...googleTrends, ...tiktokTrends];
+  let topics = [];
+  for (const source of sources) {
+    if (source.status === 'fulfilled' && source.value.length > 0) {
+      topics.push(...source.value);
+    }
+  }
 
   // Filter out already used topics (check last 20 stocks)
   try {
@@ -104,9 +158,12 @@ export async function getTrendingTopics(refresh = false) {
     topics = topics.filter(t => !usedTopics.some(u => t.topic.toLowerCase().includes(u) || u.includes(t.topic.toLowerCase())));
   } catch {}
 
-  // If empty, add fallback
+  // If all sources empty, use fallback
   if (topics.length === 0) {
     topics = [randomFromFallback()];
+    log('TRENDING', 'All sources empty, using fallback topics');
+  } else {
+    log('TRENDING', `${topics.length} topics from ${[...new Set(topics.map(t => t.source))].join(', ')}`);
   }
 
   // Shuffle and deduplicate
@@ -119,6 +176,23 @@ export async function getTrendingTopics(refresh = false) {
   return topics;
 }
 
+/**
+ * Pick the best trending topic — actually uses real trending data!
+ */
 export async function pickBestTrending() {
+  try {
+    const topics = await getTrendingTopics(true); // force refresh
+    if (topics && topics.length > 0) {
+      // Pick the one with highest traffic or just the first good one
+      const sorted = topics.sort((a, b) => {
+        const trafficA = parseInt((a.traffic || '0').replace(/[^0-9]/g, '')) || 0;
+        const trafficB = parseInt((b.traffic || '0').replace(/[^0-9]/g, '')) || 0;
+        return trafficB - trafficA;
+      });
+      return { ...sorted[0], source: sorted[0].source || 'trending' };
+    }
+  } catch (err) {
+    console.warn('pickBestTrending fallback:', err.message);
+  }
   return randomFromFallback();
 }

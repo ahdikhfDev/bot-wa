@@ -5,30 +5,159 @@ import ffmpegPath from "ffmpeg-static";
 import { execFile } from "child_process";
 import Groq from "groq-sdk";
 import { getSetting } from "./db.js";
-import { getGoogleTtsBase64, getAllGoogleTtsBase64 } from "./googleTts.js";
+import { getEdgeTtsBuffer, VOICES } from "./edgeTts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const SCRIPT_PROMPT = [
-    "Kamu adalah script writer video edukatif. Buat script video tentang topik yang diminta.",
-    "Output JSON dengan format:",
-    "{ \"title\": \"judul video\", \"scenes\": [",
-    "  { \"narasi\": \"Narasi Bahasa Indonesia santai\", \"visual_prompt\": \"English visual prompt\", \"durasi_detik\": 10 }",
-    "] }",
-    "Aturan:",
-    "- Total: 60-90 detik (6 scene)",
-    "- Scene 1: intro, 2-5: isi, 6: penutup (akhiri dengan Terimakasih sudah menonton)",
-    "- narasi pake Bahasa Indonesia santai, kaya ngobrol, max 200 karakter per scene",
-    "- visual_prompt: deskripsi gambar Bahasa Inggris untuk AI image generator",
-    "- Output HANYA JSON, tanpa teks lain"
-].join("\n");
+// ─── Script Style Prompts ───
+const SCRIPT_STYLES = {
+    edukasi: [
+        "Kamu adalah script writer video edukatif. Buat script video tentang topik yang diminta.",
+        "Output JSON dengan format:",
+        '{ "title": "judul video", "scenes": [',
+        '  { "narasi": "Narasi Bahasa Indonesia santai", "visual_prompt": "English visual prompt", "durasi_detik": 10 }',
+        "] }",
+        "Aturan:",
+        "- Total: 60-90 detik (6 scene)",
+        "- Scene 1: intro, 2-5: isi, 6: penutup (akhiri dengan Terimakasih sudah menonton)",
+        "- narasi pake Bahasa Indonesia santai, kaya ngobrol, max 200 karakter per scene",
+        "- visual_prompt: deskripsi gambar Bahasa Inggris untuk AI image generator",
+        "- Output HANYA JSON, tanpa teks lain"
+    ].join("\n"),
+
+    fakta: [
+        "Kamu adalah script writer video fakta unik dan menarik.",
+        "Buat script video yang berisi fakta-fakta mengejutkan tentang topik yang diminta.",
+        "Output JSON dengan format:",
+        '{ "title": "judul video", "scenes": [',
+        '  { "narasi": "Narasi Bahasa Indonesia", "visual_prompt": "English visual prompt", "durasi_detik": 10 }',
+        "] }",
+        "Aturan:",
+        "- Total: 45-60 detik (4-5 scene)",
+        "- Scene 1: intro dengan hook yang bikin penasaran, sisanya: fakta per scene",
+        "- narasi pake Bahasa Indonesia santai, gaya kaya orang ngomong 'Lo tau gak sih...'",
+        "- Setiap scene kasih 1-2 fakta unik yang bikin orang kaget",
+        "- max 200 karakter per scene",
+        "- visual_prompt: deskripsi gambar Bahasa Inggris yang mendukung fakta tersebut",
+        "- Output HANYA JSON, tanpa teks lain"
+    ].join("\n"),
+
+    story: [
+        "Kamu adalah penulis cerita pendek yang memukau.",
+        "Buat script video story telling tentang topik yang diminta.",
+        "Output JSON dengan format:",
+        '{ "title": "judul cerita", "scenes": [',
+        '  { "narasi": "Narasi Bahasa Indonesia", "visual_prompt": "English visual prompt", "durasi_detik": 12 }',
+        "] }",
+        "Aturan:",
+        "- Total: 60-90 detik (5-6 scene)",
+        "- Scene 1: pembukaan yang narik perhatian, 2-4: konflik/isi, 5-6: resolusi & pesan moral",
+        "- narasi pake Bahasa Indonesia puitis, deskriptif, evocative — kaya dengerin storyteller",
+        "- Bikin pembaca ngerasa terbawa suasana",
+        "- max 250 karakter per scene",
+        "- visual_prompt: deskripsi gambar Bahasa Inggris cinematic, moody, mendukung cerita",
+        "- Output HANYA JSON, tanpa teks lain"
+    ].join("\n"),
+
+    quotes: [
+        "Kamu adalah creative director konten quotes bijak yang viral.",
+        "Buat script video quotes/kata-kata bijak tentang topik yang diminta.",
+        "Output JSON dengan format:",
+        '{ "title": "judul quotes", "scenes": [',
+        '  { "narasi": "Kutipan bijak atau narasi inspirasional", "visual_prompt": "English visual prompt", "durasi_detik": 8 }',
+        "] }",
+        "Aturan:",
+        "- Total: 30-45 detik (4-5 scene)",
+        "- Setiap scene berisi 1 quotes bijak/poetic yang DALAM dan menyentuh",
+        "- Quotes harus original, bukan kutipan terkenal",
+        "- visual_prompt: deskripsi gambar Bahasa Inggris yang aesthetic, cinematic, cocok sama vibe quotes",
+        "- Durasi per scene: 7-10 detik (biar orang sempet baca & resapi)",
+        "- Output HANYA JSON, tanpa teks lain"
+    ].join("\n"),
+
+    // ─── KONTEN STYLES — multi-scene, viral, engaging ───
+    kfakta: [
+        "Kamu adalah creative content writer spesialis konten viral TikTok/Reels.",
+        "Buat script konten fakta unik yang bikin orang BERHENTI SCROLL!",
+        "Output JSON dengan format:",
+        '{ "title": "judul video", "scenes": [',
+        '  { "narasi": "Narasi Bahasa Indonesia engaging", "visual_prompt": "English visual prompt", "durasi_detik": 8 }',
+        "] }",
+        "Aturan:",
+        "- Total: 60-90 detik (8-10 scene)",
+        "- Scene 1: HOOK BESAR yang langsung narik perhatian ('Lo tau gak sih...', 'Fakta gila...', 'Yang jarang orang tau...')",
+        "- Scene 2-7: 1-2 fakta unik per scene, SETIAP scene harus punya hook pembuka sendiri",
+        "- Scene terakhir: OUTRO memorable, call-to-action kaya 'Follow buat konten keren lainnya!'",
+        "- narasi pake Bahasa Indonesia santai BANGET, gaya ngobrol sehari-hari, pake 'lo', 'gue', 'wow', 'gila sih'",
+        "- max 100-120 karakter per scene (padat, cepet, engaging)",
+        "- visual_prompt: deskripsi gambar Bahasa Inggris colorful, vibrant, eye-catching, 9:16 portrait",
+        "- Output HANYA JSON, tanpa teks lain"
+    ].join("\n"),
+
+    kedukasi: [
+        "Kamu adalah content creator edukasi yang bikin belajar jadi SERU dan GAK MEMBOSANKAN.",
+        "Buat script konten edukasi yang informatif TETAPI tetap engaging kaya konten viral.",
+        "Output JSON dengan format:",
+        '{ "title": "judul video", "scenes": [',
+        '  { "narasi": "Narasi Bahasa Indonesia santai", "visual_prompt": "English visual prompt", "durasi_detik": 9 }',
+        "] }",
+        "Aturan:",
+        "- Total: 60-90 detik (7-9 scene)",
+        "- Scene 1: HOOK + fakta mengejutkan yang bikin orang penasaran",
+        "- Scene 2-6: PUSAT INFO — jelasin konsep pake analogi seru, contoh nyata, perbandingan",
+        "- Scene 7-8: KESIMPULAN — takeaway utama yang gampang diinget",
+        "- Scene terakhir: OUTRO kaya 'Gimana? Mindblowing kan? Share biar temen lo pada tau!'",
+        "- narasi pake Bahasa Indonesia santai, kaya guru muda yang asik ngajar",
+        "- max 130 karakter per scene",
+        "- visual_prompt: deskripsi gambar Bahasa Inggris yang informatif dan colorful, 9:16 portrait",
+        "- Output HANYA JSON, tanpa teks lain"
+    ].join("\n"),
+
+    kstory: [
+        "Kamu adalah storyteller yang bikin konten cerita pendek VIRAL.",
+        "Buat script konten storytelling yang bikin orang BAWEK dan PENGEN TERUS NONTON.",
+        "Output JSON dengan format:",
+        '{ "title": "judul cerita", "scenes": [',
+        '  { "narasi": "Narasi Bahasa Indonesia dramatis", "visual_prompt": "English visual prompt", "durasi_detik": 9 }',
+        "] }",
+        "Aturan:",
+        "- Total: 60-90 detik (7-9 scene)",
+        "- Scene 1-2: OPENING HOOK — langsung lempar konflik atau pertanyaan yang bikin penasaran",
+        "- Scene 3-6: KONFLIK & KETEGANGAN — cerita naik, karakter menghadapi masalah",
+        "- Scene 7-8: RESOLUSI — penyelesaian + PLOT TWIST kalo bisa",
+        "- Scene terakhir: PESAN MORAL + OUTRO yang bikin orang mikir",
+        "- narasi pake Bahasa Indonesia evocative, deskriptif, puitis — bikin terbawa suasana",
+        "- max 150 karakter per scene",
+        "- visual_prompt: deskripsi gambar Bahasa Inggris cinematic, moody, dramatic lighting, 9:16 portrait",
+        "- Output HANYA JSON, tanpa teks lain"
+    ].join("\n"),
+
+    kquotes: [
+        "Kamu adalah creative director konten quotes & kata-kata bijak yang VIRAL DI MEDSOS.",
+        "Buat script konten quotes yang DALAM, aesthetic, dan bikin orang ngerasa.",
+        "Output JSON dengan format:",
+        '{ "title": "judul quotes", "scenes": [',
+        '  { "narasi": "Quotes bijak Bahasa Indonesia", "visual_prompt": "English visual prompt", "durasi_detik": 8 }',
+        "] }",
+        "Aturan:",
+        "- Total: 60-80 detik (8-10 scene)",
+        "- SETIAP scene berisi 1 quotes original yang DALAM, puitis, dan menyentuh hati",
+        "- Quotes HARUS ORIGINAL buatan sendiri, bukan kutipan terkenal atau platitude basi",
+        "- Tema quotes sesuai topik yang diminta, variasikan dari berbagai sudut pandang",
+        "- Setiap quotes harus: relatable, memorable, dan punya 'rasa'",
+        "- narasi pake Bahasa Indonesia puitis, metaforis, evocative",
+        "- max 80-100 karakter per scene (biar orang sempet baca & ngeresapi)",
+        "- visual_prompt: deskripsi gambar Bahasa Inggris aesthetic, cinematic, minimalist atau natural, 9:16 portrait",
+        "- Output HANYA JSON, tanpa teks lain"
+    ].join("\n"),
+};
 
 const ROAST_PROMPT = [
     "Kamu adalah script writer video roasting yang brutal dan ngena banget.",
     "Buat script video roasting yang nyerang personalitas target secara lucu tapi sadis.",
     "Output JSON dengan format:",
-    "{ \"title\": \"judul video\", \"scenes\": [",
-    "  { \"narasi\": \"Narasi Bahasa Indonesia\", \"visual_prompt\": \"English visual prompt\", \"durasi_detik\": 10 }",
+    '{ "title": "judul video", "scenes": [',
+    '  { "narasi": "Narasi Bahasa Indonesia", "visual_prompt": "English visual prompt", "durasi_detik": 10 }',
     "] }",
     "Aturan:",
     "- Total: 60-90 detik (6 scene)",
@@ -40,8 +169,6 @@ const ROAST_PROMPT = [
     "- visual_prompt: deskripsi gambar Bahasa Inggris yang mendukung vibe roasting (karikatural, exaggerated)",
     "- Output HANYA JSON, tanpa teks lain"
 ].join("\n");
-
-
 
 const MIN_VIDEO_DURATION = 60;
 const TARGET_DURATION = 65;
@@ -90,7 +217,6 @@ function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-
 function extractJson(text) {
     const cleaned = text
         .replace(/,\s*}/g, '}')
@@ -107,8 +233,7 @@ function extractJson(text) {
     return null;
 }
 
-
-async function generateScript(topic) {
+async function generateScript(topic, style = 'edukasi') {
     const client = getGroqClient();
     const safeTopic = topic.replace(/["\\\n\r]/g, (c) => {
         if (c === '"') return '\\"';
@@ -117,7 +242,7 @@ async function generateScript(topic) {
     });
 
     const isRoast = /roast/i.test(safeTopic);
-    const prompt = isRoast ? ROAST_PROMPT : SCRIPT_PROMPT;
+    const prompt = isRoast ? ROAST_PROMPT : (SCRIPT_STYLES[style] || SCRIPT_STYLES.edukasi);
 
     let lastError = null;
 
@@ -172,7 +297,6 @@ async function generateScript(topic) {
 
     throw lastError || new Error("Gagal generate script setelah 3 percobaan");
 }
-
 
 async function generateImageFromPollinations(prompt, timeoutMs = 15000) {
     const url = "https://image.pollinations.ai/prompt/" +
@@ -234,9 +358,9 @@ async function generateImages(scenes, workDir, onProgress) {
     return imagePaths;
 }
 
-export async function generateVideo(topic, onProgress) {
+export async function generateVideo(topic, onProgress, style = 'edukasi') {
     queueLength++;
-    
+
     const task = videoQueue.then(async () => {
         const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
         const workDir = "/tmp/thirty-video-" + jobId;
@@ -245,7 +369,7 @@ export async function generateVideo(topic, onProgress) {
 
         try {
             onProgress("Nulis script...");
-            const data = await generateScript(topic.trim());
+            const data = await generateScript(topic.trim(), style);
             const total = data.scenes.length;
             onProgress("Script jadi: " + data.title + " (" + total + " scene)");
             enforceDuration(data.scenes);
@@ -254,26 +378,21 @@ export async function generateVideo(topic, onProgress) {
 
             const imagePaths = await generateImages(data.scenes, workDir, onProgress);
 
-            onProgress("Generate suara... (0/" + total + ")");
+            onProgress("Generate suara natural via Edge-TTS... (0/" + total + ")");
             const audioPaths = [];
             for (let i = 0; i < total; i++) {
                 const text = data.scenes[i].narasi || "";
                 const audioPath = path.join(workDir, "a" + i + ".mp3");
 
-                if (text.length <= 200) {
-                    const b64 = await getGoogleTtsBase64(text, { lang: "id" });
-                    fs.writeFileSync(audioPath, Buffer.from(b64, "base64"));
-                } else {
-                    const parts = await getAllGoogleTtsBase64(text, { lang: "id" });
-                    const audioBuffers = parts
-                        .map(p => p.base64)
-                        .filter(Boolean)
-                        .map(b64 => Buffer.from(b64, "base64"));
-                    fs.writeFileSync(audioPath, Buffer.concat(audioBuffers));
-                }
+                // Gunakan Edge-TTS — suara natural, bukan robot
+                const buf = await getEdgeTtsBuffer(text, {
+                    voice: VOICES.ardi,
+                    rate: 0,
+                });
+                fs.writeFileSync(audioPath, buf);
 
                 audioPaths.push(audioPath);
-                onProgress("Generate suara... (" + (i + 1) + "/" + total + ")");
+                onProgress("Generate suara cowok natural... (" + (i + 1) + "/" + total + ")");
             }
 
             onProgress("Rakit video...");
@@ -371,6 +490,88 @@ async function assembleVideo(scenes, imagePaths, audios, workDir, outputPath) {
     ]);
 }
 
+// ─── Konten Multi-Scene (Viral Style, 1+ Menit) ───
+
+/**
+ * Generate konten multi-scene: mirip generateVideo tapi dengan script style
+ * konten viral (lebih banyak scene, lebih pendek per scene, hook tiap scene).
+ * Minimal 1 menit, ganti gambar tiap scene.
+ */
+export async function generateKonten(topic, onProgress, style = 'fakta') {
+    queueLength++;
+
+    const kontenStyle = 'k' + style; // kfakta, kedukasi, kstory, kquotes
+
+    const task = videoQueue.then(async () => {
+        const jobId = 'konten-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        const workDir = "/tmp/thirty-konten-" + jobId;
+        fs.mkdirSync(workDir, { recursive: true });
+        fs.writeFileSync(path.join(workDir, ".active"), String(Date.now()));
+
+        try {
+            onProgress("Nulis script konten viral...");
+            const data = await generateScript(topic.trim(), kontenStyle);
+            const total = data.scenes.length;
+            onProgress("Script jadi: " + data.title + " (" + total + " scene)");
+            enforceDuration(data.scenes);
+            const enforcedTotal = data.scenes.reduce((s, c) => s + (c.durasi_detik || 10), 0);
+            onProgress("Durasi: " + enforcedTotal + " detik");
+
+            const imagePaths = await generateImages(data.scenes, workDir, onProgress);
+
+            onProgress("Generate suara natural via Edge-TTS... (0/" + total + ")");
+            const audioPaths = [];
+            for (let i = 0; i < total; i++) {
+                const text = data.scenes[i].narasi || "";
+                const audioPath = path.join(workDir, "a" + i + ".mp3");
+                const buf = await getEdgeTtsBuffer(text, {
+                    voice: VOICES.ardi,
+                    rate: 0,
+                });
+                fs.writeFileSync(audioPath, buf);
+                audioPaths.push(audioPath);
+                onProgress("Generate suara cowok natural... (" + (i + 1) + "/" + total + ")");
+            }
+
+            onProgress("Rakit video...");
+            const outputPath = path.join(workDir, "output.mp4");
+            await assembleVideo(data.scenes, imagePaths, audioPaths, workDir, outputPath);
+
+            const sizeMB = (fs.statSync(outputPath).size / 1024 / 1024).toFixed(1);
+            onProgress("Video siap! (" + sizeMB + "MB)");
+
+            try { fs.unlinkSync(path.join(workDir, ".active")); } catch {}
+            return { outputPath, workDir, title: data.title };
+        } catch (err) {
+            try { fs.unlinkSync(path.join(workDir, ".active")); } catch {}
+            cleanup(workDir);
+            throw err;
+        } finally {
+            queueLength--;
+        }
+    });
+
+    videoQueue = task.catch(() => {});
+    return task;
+}
+
+function getAudioDuration(audioPath) {
+    return new Promise((resolve) => {
+        execFile(ffmpegPath, ['-i', audioPath, '-f', 'null', '-'],
+            { timeout: 10000 },
+            (err, stdout, stderr) => {
+                const match = stderr.match(/Duration: (\d+):(\d+):(\d+)\.(\d+)/);
+                if (match) {
+                    const h = parseInt(match[1]), m = parseInt(match[2]), s = parseInt(match[3]);
+                    resolve(h * 3600 + m * 60 + s);
+                } else {
+                    resolve(5);
+                }
+            }
+        );
+    });
+}
+
 export function cleanup(workDir) {
     if (fs.existsSync(workDir)) {
         fs.rmSync(workDir, { recursive: true, force: true });
@@ -397,4 +598,3 @@ export function cleanupAll() {
         console.warn("Warning: Failed to cleanup /tmp:", err.message);
     }
 }
-

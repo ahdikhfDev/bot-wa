@@ -125,6 +125,9 @@ async function initDb() {
     initSummaryTable();
     initUserProfileTable();
     initStockTable();
+    initCronJobsTable();
+    // Auto-add owner numbers to whitelist BEFORE first save
+    autoWhitelistOwners();
     saveDb();
     console.log('💾 Database initialized');
 }
@@ -173,6 +176,8 @@ export async function flushDb() {
     await saveDb();
 }
 
+export { saveDb };
+
 // Helper: Calculate word overlap between two strings (for deduplication)
 function getWordOverlap(str1, str2) {
     const w1 = new Set(str1.toLowerCase().split(/\W+/).filter(w => w.length > 3));
@@ -184,6 +189,24 @@ function getWordOverlap(str1, str2) {
         if (w2.has(w)) intersect++;
     }
     return intersect / Math.min(w1.size, w2.size);
+}
+
+function autoWhitelistOwners() {
+    if (!db) return;
+    const envVars = ['OWNER_NUMBER', 'OWNER_LID', 'OWNER_IDS'];
+    for (const envKey of envVars) {
+        const val = process.env[envKey];
+        if (!val) continue;
+        val.split(',').map(v => v.trim()).filter(Boolean).forEach(jid => {
+            const num = normalizeJid(jid);
+            if (!num) return;
+            // LID pakai @lid, nomor HP pakai @s.whatsapp.net
+            const suffix = envKey === 'OWNER_LID' ? '@lid' : '@s.whatsapp.net';
+            const normalizedJid = `${num}${suffix}`;
+            db.run('INSERT OR IGNORE INTO whitelist (jid, name) VALUES (?, ?)', [normalizedJid, '👑 Owner']);
+            console.log(`👑 Auto-whitelisted owner: ${normalizedJid}`);
+        });
+    }
 }
 
 export function initDatabase() {
@@ -274,6 +297,28 @@ export function clearGroupContext(groupId) {
     saveDb();
 }
 
+// ==================== CRON JOBS TABLE ====================
+
+function initCronJobsTable() {
+    if (!db) return;
+    db.run(`
+        CREATE TABLE IF NOT EXISTS cron_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE,
+            chat_id TEXT NOT NULL,
+            trigger_hour INTEGER NOT NULL,
+            trigger_minute INTEGER NOT NULL,
+            action_type TEXT NOT NULL,
+            action_params TEXT DEFAULT '{}',
+            days TEXT DEFAULT '*',
+            enabled INTEGER DEFAULT 1,
+            last_run_date TEXT DEFAULT '',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    saveDb();
+}
+
 // ==================== SETTINGS FUNCTIONS ====================
 
 export function setMode(chatId, mode) {
@@ -293,25 +338,46 @@ export function getMode(chatId) {
 
 // ==================== WHITELIST FUNCTIONS ====================
 
+/** Normalize JID: strip @s.whatsapp.net, device suffix (:1, .0), etc */
+function normalizeJid(jid = '') {
+    if (typeof jid !== 'string') return '';
+    return jid.split('@')[0].split(':')[0].split('.')[0].trim();
+}
+
 export function isWhitelisted(jid) {
     if (!db) return false;
-    const result = db.exec('SELECT 1 FROM whitelist WHERE jid = ?', [jid]);
+    // Check exact match first (backward compatible with old format)
+    let result = db.exec('SELECT 1 FROM whitelist WHERE jid = ?', [jid]);
+    if (result.length > 0 && result[0].values.length > 0) return true;
+    // Fallback: normalize and check with consistent formats
+    const num = normalizeJid(jid);
+    if (!num) return false;
+    result = db.exec('SELECT 1 FROM whitelist WHERE jid = ?', [`${num}@s.whatsapp.net`]);
+    if (result.length > 0 && result[0].values.length > 0) return true;
+    // Also check @lid format (WhatsApp privacy IDs)
+    result = db.exec('SELECT 1 FROM whitelist WHERE jid = ?', [`${num}@lid`]);
     return result.length > 0 && result[0].values.length > 0;
 }
 
 export function addWhitelist(jid, name = '') {
     if (!db) return;
+    // Always store with @s.whatsapp.net suffix for consistency
+    const num = normalizeJid(jid);
+    if (!num) return;
+    const normalizedJid = `${num}@s.whatsapp.net`;
     if (name) {
-        db.run('INSERT OR REPLACE INTO whitelist (jid, name) VALUES (?, ?)', [jid, name]);
+        db.run('INSERT OR REPLACE INTO whitelist (jid, name) VALUES (?, ?)', [normalizedJid, name]);
     } else {
-        db.run('INSERT OR IGNORE INTO whitelist (jid) VALUES (?)', [jid]);
+        db.run('INSERT OR IGNORE INTO whitelist (jid) VALUES (?)', [normalizedJid]);
     }
     saveDb();
 }
 
 export function removeWhitelist(jid) {
     if (!db) return;
-    db.run('DELETE FROM whitelist WHERE jid = ?', [jid]);
+    // Remove exact match or normalized version
+    const num = normalizeJid(jid);
+    db.run('DELETE FROM whitelist WHERE jid = ? OR jid = ?', [jid, `${num}@s.whatsapp.net`]);
     saveDb();
 }
 

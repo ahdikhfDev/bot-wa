@@ -1,4 +1,5 @@
 import { getSetting } from './db.js';
+import * as cheerio from 'cheerio';
 
 const UA = 'ThirtyBot/1.0 (WhatsApp AI Assistant)';
 const MAX_RESULTS = 5;
@@ -49,6 +50,64 @@ export async function searchTavily(query) {
     }
 }
 
+
+
+// ==================== BING SEARCH (Free scraping, real URLs via cite element, date sorting) ====================
+
+export async function searchBing(query) {
+    // Use sort=date for most recent results
+    const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&hl=en&sort=date`;
+    try {
+        const r = await fetchWithTimeout(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml',
+                'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
+            }
+        });
+
+        if (!r.ok) {
+            console.error('❌ Bing search status:', r.status);
+            return null;
+        }
+
+        const html = await r.text();
+        const $ = cheerio.load(html);
+
+        const items = [];
+        $('li.b_algo, .b_algo').each((i, el) => {
+            if (i >= MAX_RESULTS) return false;
+            const title = $(el).find('h2 a').text().trim();
+            const snippet = $(el).find('.b_caption p, .b_lineclamp2').text().trim();
+
+            // Extract real URL from cite element (Bing uses client-side redirects)
+            const citeText = $(el).find('cite').text().trim();
+            let realUrl = '';
+            if (citeText) {
+                // Parse: "https://www.example.com › path › page" → "https://www.example.com/path/page"
+                realUrl = citeText.replace(/\s*›\s*/g, '/').trim();
+                if (!realUrl.startsWith('http')) {
+                    realUrl = 'https://' + realUrl;
+                }
+            }
+
+            if (title && realUrl) {
+                items.push({ title, url: realUrl, snippet: snippet.substring(0, 250) });
+            }
+        });
+
+        if (items.length === 0) {
+            console.error('❌ Bing search: no results extracted');
+            return null;
+        }
+
+        return { items, source: 'bing' };
+    } catch (err) {
+        console.error('❌ Bing search error:', err.message);
+        return null;
+    }
+}
+
 // ==================== WIKIPEDIA SEARCH (fallback, no API key needed) ====================
 
 export async function searchWikipedia(query) {
@@ -84,10 +143,17 @@ export async function searchWikipedia(query) {
 // ==================== GENERAL SEARCH (auto-detect best backend) ====================
 
 export async function searchWeb(query) {
+    // 1. Tavily (Best)
     if (hasApiKey('TAVILY_API_KEY')) {
         const result = await searchTavily(query);
-        if (result) return result;
+        if (result && !result.error) return result;
     }
+
+    // 2. Bing scraping (real URLs via cite, sorted by date)
+    const bingResult = await searchBing(query);
+    if (bingResult) return bingResult;
+
+    // 3. Wikipedia (Last resort)
     return await searchWikipedia(query);
 }
 
@@ -124,6 +190,7 @@ export function formatSearchResults(data) {
     switch (data.source) {
         case 'berita': icon = '📰'; label = 'Berita'; break;
         case 'tavily': icon = '🔍'; label = 'Hasil Web'; break;
+        case 'bing': icon = '🔍'; label = 'Hasil Web'; break;
         case 'wikipedia': icon = '📖'; label = 'Wikipedia'; break;
         default: icon = '🔍'; label = 'Hasil Pencarian';
     }
@@ -153,6 +220,8 @@ const SEARCH_PATTERNS = [
     { regex: /(?:^|\s)siapakah\s+(.+)/i, type: 'web' },
     { regex: /(?:^|\s)jelaskan\s+(?:tentang\s+)?(.+)/i, type: 'web' },
     { regex: /(?:^|\s)googling\s+(.+)/i, type: 'web' },
+    { regex: /(?:^|\s)(?:harga|kurs|cuaca|hasil|skor)\s+(.+)/i, type: 'web' },
+    { regex: /(?:^|\s)bagaimana\s+(?:cara|kondisi|kabar)\s+(.+)/i, type: 'web' },
 ];
 
 export function detectSearchQuery(text) {

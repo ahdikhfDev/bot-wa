@@ -45,7 +45,7 @@ function formatUptime(seconds) {
     if (d > 0) parts.push(d + "h");
     if (h > 0) parts.push(h + "j");
     if (m > 0) parts.push(m + "m");
-    if (s > 0 || parts.length === 0) parts.push(s + "d");
+    if (s > 0 || parts.length === 0) parts.push(s + "dt");
     
     return parts.join(" ");
 }

@@ -1,12 +1,57 @@
-import { chromium } from 'playwright';
-import path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import fs from 'fs/promises';
+import path from 'path';
+import os from 'os';
 import { log, error } from '../utils/logger.js';
 
+const execFileAsync = promisify(execFile);
+
 /**
- * Take a screenshot of a URL
- * @param {string} url 
- * @param {object} options 
+ * Find Chromium binary from Playwright cache or env
+ */
+async function findChromiumPath() {
+    const envPath = process.env.CHROME_PATH;
+    if (envPath) return envPath;
+
+    const home = os.homedir();
+    const cacheDir = path.join(home, '.cache', 'ms-playwright');
+
+    // Known chromium paths
+    const candidates = [
+        path.join(cacheDir, 'chromium-1223', 'chrome-linux', 'chrome'),
+        path.join(cacheDir, 'chromium_headless_shell-1223', 'chrome-linux', 'chrome'),
+    ];
+
+    for (const p of candidates) {
+        try {
+            await fs.access(p, fs.constants.X_OK);
+            return p;
+        } catch { /* not found */ }
+    }
+
+    // Fallback: scan cache directory
+    try {
+        const entries = await fs.readdir(cacheDir);
+        for (const entry of entries) {
+            if (entry.startsWith('chromium-')) {
+                const chromePath = path.join(cacheDir, entry, 'chrome-linux', 'chrome');
+                try {
+                    await fs.access(chromePath, fs.constants.X_OK);
+                    return chromePath;
+                } catch { /* not executable */ }
+            }
+        }
+    } catch { /* cache dir not found */ }
+
+    // Last resort fallback
+    return 'chromium-browser';
+}
+
+/**
+ * Take a screenshot of a URL using headless Chromium binary (no Playwright)
+ * @param {string} url
+ * @param {object} options
  * @returns {Promise<Buffer>}
  */
 export async function takeScreenshot(url, options = {}) {
@@ -14,44 +59,37 @@ export async function takeScreenshot(url, options = {}) {
         url = 'https://' + url;
     }
 
-    log(`Browsing to ${url} for screenshot...`);
-    
-    const browser = await chromium.launch({ 
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'] // Critical for some Linux environments
-    });
-    
+    log(`Taking screenshot of ${url} via Chromium binary...`);
+
+    const chromePath = await findChromiumPath();
+    const outputPath = path.join(os.tmpdir(), `ss_${Date.now()}.png`);
+
+    const args = [
+        '--headless',
+        '--disable-gpu',
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        '--no-first-run',
+        '--hide-scrollbars',
+        `--screenshot=${outputPath}`,
+        `--window-size=${options.width || 1280},${options.height || 720}`,
+        url,
+    ];
+
     try {
-        const context = await browser.newContext({
-            viewport: { width: 1280, height: 720 },
-            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-        });
-        
-        const page = await context.newPage();
-        
-        // Navigate with a reasonable timeout
-        await page.goto(url, { 
-            waitUntil: 'networkidle', 
-            timeout: 60000 
+        await execFileAsync(chromePath, args, {
+            timeout: 30000,
+            maxBuffer: 50 * 1024 * 1024,
         });
 
-        // Optional: Wait for a bit more if it's a heavy JS site
-        await page.waitForTimeout(2000);
-        
-        const tempPath = path.join(process.cwd(), `temp_ss_${Date.now()}.png`);
-        await page.screenshot({ 
-            path: tempPath, 
-            fullPage: !!options.fullPage 
-        });
-        
-        const buffer = await fs.readFile(tempPath);
-        await fs.unlink(tempPath).catch(() => {});
-        
+        const buffer = await fs.readFile(outputPath);
+        await fs.unlink(outputPath).catch(() => {});
+        log(`Screenshot done: ${buffer.length} bytes`);
         return buffer;
     } catch (err) {
         error(`Screenshot error for ${url}:`, err.message);
-        throw err;
-    } finally {
-        await browser.close();
+        // Cleanup on error
+        await fs.unlink(outputPath).catch(() => {});
+        throw new Error(`Gagal screenshot: ${err.message}`);
     }
 }

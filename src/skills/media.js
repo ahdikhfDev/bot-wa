@@ -1,5 +1,5 @@
-import { getVoiceBuffer } from '../services/ai.js';
 import { CONFIG, assertBufferLimit, assertTextLimit } from '../config.js';
+import { getEdgeTtsBuffer, VOICES } from '../services/edgeTts.js';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -32,10 +32,38 @@ async function makeStickerBuffer(buffer) {
     }
 }
 
+/**
+ * Convert MP3 buffer to OGG Opus (WhatsApp voice note format) using FFmpeg
+ */
+async function convertToVoiceOgg(mp3Buffer) {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'thirty-voice-'));
+    const inputPath = path.join(dir, 'input.mp3');
+    const outputPath = path.join(dir, 'output.ogg');
+
+    try {
+        await fs.writeFile(inputPath, mp3Buffer);
+        await execFileAsync(ffmpegBin, [
+            '-y',
+            '-i', inputPath,
+            '-c:a', 'libopus',
+            '-b:a', '24k',
+            '-vbr', 'on',
+            '-compression_level', '10',
+            '-ar', '24000',
+            '-ac', '1',
+            '-application', 'voip',
+            outputPath,
+        ], { timeout: 30000 });
+        return await fs.readFile(outputPath);
+    } finally {
+        await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+}
+
 export default {
     name: 'media',
     title: 'Media Maker',
-    description: 'Buat stiker dan voice note',
+    description: 'Buat stiker dan voice note (suara natural)',
     commands: ['s', 'sticker', 'say'],
 
     async handler(sock, remoteJid, args, context) {
@@ -47,12 +75,27 @@ export default {
                 await sock.sendMessage(remoteJid, { text: '❌ Usage: /say [teks]' });
                 return;
             }
-            assertTextLimit(msgText, 'Teks voice');
-            const voiceBuffer = await getVoiceBuffer(msgText);
-            if (voiceBuffer) {
-                await sock.sendMessage(remoteJid, { audio: voiceBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
-            } else {
-                await sock.sendMessage(remoteJid, { text: '❌ Gagal membuat voice.' });
+
+            try {
+                // Generate suara natural pake Edge-TTS
+                const mp3Buffer = await getEdgeTtsBuffer(msgText, {
+                    voice: VOICES.ardi,
+                    rate: 0,
+                });
+
+                // Convert ke OGG Opus biar compatible WhatsApp voice note
+                const oggBuffer = await convertToVoiceOgg(mp3Buffer);
+
+                await sock.sendMessage(remoteJid, {
+                    audio: oggBuffer,
+                    mimetype: 'audio/ogg; codecs=opus',
+                    ptt: true
+                });
+            } catch (err) {
+                console.error('/say error:', err.message);
+                await sock.sendMessage(remoteJid, {
+                    text: '❌ Gagal: ' + err.message.substring(0, 200)
+                });
             }
             return;
         }

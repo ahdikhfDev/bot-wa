@@ -1,5 +1,6 @@
 import { callAI, chatWithContext, transcribeAudio, callAIVision, extractFromDocument } from '../services/ai.js';
 import { addContextMessage, getMode, isWhitelisted, addMemory, broadcastTargets, pendingBroadcasts, deletePendingBroadcast } from '../services/db.js';
+import { log, error } from '../utils/logger.js';
 import { downloadContentFromMessage } from 'baileys';
 import fs from 'fs/promises';
 import path from 'path';
@@ -7,10 +8,25 @@ import { findSkillByCommand, findSkillByNaturalLanguage } from '../skills/_loade
 import { formatSearchResults, searchWeb, searchNews } from '../services/search.js';
 import { buildContext } from '../services/contextBuilder.js';
 import { CONFIG, assertBufferLimit, isOwnerId } from '../config.js';
-import PDFParse from 'pdf-parse';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pdfParse = require('pdf-parse');
 import mammoth from 'mammoth';
+import {
+    getModerationConfig, checkFlood, checkToxic, checkLinkSpam,
+    issueWarning, getModerationAction, extractUrls
+} from '../services/autoModerator.js';
 const spamCooldowns = new Map();
 setInterval(() => spamCooldowns.clear(), 60 * 60 * 1000);
+
+// Cooldown untuk smart nimbrung (biar gak kebanyakan chat)
+const nimbrungCooldowns = new Map();
+setInterval(() => {
+    const cutoff = Date.now() - 600000; // 10 menit
+    for (const [jid, time] of nimbrungCooldowns) {
+        if (time < cutoff) nimbrungCooldowns.delete(jid);
+    }
+}, 600000);
 
 /**
  * Safe media downloader using streaming to prevent OOM
@@ -31,13 +47,22 @@ async function safeDownloadMedia(msg, type, limit) {
 export async function handleMessage(sock, msg) {
     try {
         let messageContent = getMessageText(msg);
-        if (!msg.message) return;
+        if (!msg.message) {
+            console.log('[DEBUG] Early return: !msg.message');
+            return;
+        }
 
         let remoteJid = msg.key.remoteJid;
         let senderJid = msg.key.participant || msg.key.remoteJid;
         let senderNumber = senderJid.split('@')[0];
         const isGroup = remoteJid.endsWith('@g.us');
         let isOwner = isOwnerId(senderJid) || isOwnerId(senderNumber);
+
+        // Debug: log message type for ALL messages from Ahdi
+        if (msg.pushName === 'Ahdi Khalida Fathir') {
+            const msgKeys = Object.keys(msg.message || {});
+            console.log('[DEBUG_MSG] msgType=' + JSON.stringify(msgKeys) + ' content=' + JSON.stringify(messageContent?.substring(0, 30)));
+        }
 
         // ==================== ANTI-SPAM COOLDOWN ====================
         if (!isOwner) {
@@ -115,12 +140,8 @@ export async function handleMessage(sock, msg) {
         let { command, args } = parseCommand(text);
         const quotedText = getQuotedText(msg);
 
-        if (CONFIG.groupContextEnabled && text) {
-            addContextMessage(remoteJid, sender, text);
-        }
-
-        console.log(`📨 [${isGroup ? 'GRUP' : 'DM'}] ${sender}: ${text.substring(0, 80)}`);
-        if (command) console.log(`   → Command: ${command}`);
+        log('MSG', `[${isGroup ? 'GRUP' : 'DM'}] ${sender}: ${text.substring(0, 80)}`);
+        if (command) log('CMD', command + ' dari ' + sender);
 
         // ==================== BROADCAST CONFIRMATION ====================
         if (isOwner && !command) {
@@ -153,14 +174,107 @@ export async function handleMessage(sock, msg) {
 
         // ==================== SECURITY & WHITELIST ====================
         isOwner = isOwnerId(senderJid) || isOwnerId(senderNumber);
-        console.log(`   → senderJid: ${senderJid}, isOwner: ${isOwner}`);
 
-        const isAuthorized = isOwner || isWhitelisted(remoteJid) || isWhitelisted(senderJid);
+        // Debug log untuk tracking authorization
+        const wlRemote = isWhitelisted(remoteJid);
+        const wlSender = isWhitelisted(senderJid);
+        const isAuthorized = isOwner || wlRemote || wlSender;
+
+        if (command || isMentioned) {
+            console.log(`[AUTH] senderJid=${senderJid} senderNumber=${senderNumber} isOwner=${isOwner} wlRemote=${wlRemote} wlSender=${wlSender} isAuthorized=${isAuthorized}`);
+        }
         if (!isAuthorized) {
             if (command || isMentioned) {
                 await sock.sendMessage(remoteJid, { text: '⛔ *Akses Ditolak*\nMaaf, Anda tidak memiliki izin untuk menggunakan bot ini. Silakan hubungi Maha Raja Ahdi Khalida Fathir.' });
             }
             return;
+        }
+
+        // ==================== AUTO-MODERATOR (Community) ====================
+        if (isGroup && !isOwner) {
+            const modCfg = getModerationConfig(remoteJid);
+            
+            if (modCfg.enabled && text && !command) {
+                let shouldBlock = false;
+                let blockReason = '';
+
+                // 1. Flood check
+                if (modCfg.floodProtection) {
+                    const flood = checkFlood(senderJid);
+                    if (flood.isFlood) {
+                        log('MOD_FLOOD', `${sender} flood (${flood.messageCount} msg)`);
+                        return; // Silent drop — jangan spam grup
+                    }
+                }
+
+                // 2. Toxic content check
+                if (modCfg.toxicFilter) {
+                    const toxic = checkToxic(text);
+                    
+                    if (toxic.isToxic) {
+                        const warnCount = issueWarning(senderJid, `Toxic content: ${toxic.matchedPattern}`);
+                        const action = getModerationAction(warnCount, modCfg, sender);
+                        
+                        await sock.sendMessage(remoteJid, {
+                            text: action.message,
+                            mentions: [senderJid]
+                        });
+
+                        if (action.shouldKick) {
+                            try {
+                                await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                                log('MOD_KICK', `${sender} kicked from ${remoteJid} (toxic)`);
+                            } catch (err) {
+                                log('MOD_KICK_FAIL', `Failed to kick ${sender}: ${err.message}`);
+                            }
+                        }
+                        return; // Block message
+                    }
+
+                    if (toxic.isCapsAbuse) {
+                        if (modCfg.capsFilter) {
+                            await sock.sendMessage(remoteJid, {
+                                text: `⚠️ @${sender} Mohon jangan gunakan huruf kapital berlebihan.`,
+                                mentions: [senderJid]
+                            });
+                            return;
+                        }
+                    }
+
+                    if (toxic.isLinkFlood) {
+                        const warnCount = issueWarning(senderJid, 'Too many links in one message');
+                        const action = getModerationAction(warnCount, modCfg, sender);
+                        await sock.sendMessage(remoteJid, {
+                            text: `⚠️ @${sender} Terlalu banyak link dalam satu pesan (${toxic.linkCount}).`,
+                            mentions: [senderJid]
+                        });
+                        return;
+                    }
+                }
+
+                // 3. Link spam protection
+                if (modCfg.linkSpamProtection !== 'disabled' && modCfg.linkSpamProtection !== 'draft') {
+                    const urls = extractUrls(text);
+                    for (const url of urls) {
+                        const linkSpam = checkLinkSpam(remoteJid, url);
+                        if (linkSpam.isSpam) {
+                            const warnCount = issueWarning(senderJid, `Link spam: ${url}`);
+                            const action = getModerationAction(warnCount, modCfg, sender);
+                            await sock.sendMessage(remoteJid, {
+                                text: `⚠️ @${sender} Link ini sudah diposting ${linkSpam.count} kali. Mohon jangan spam.`,
+                                mentions: [senderJid]
+                            });
+                            if (action.shouldKick) {
+                                try {
+                                    await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                                    log('MOD_KICK', `${sender} kicked from ${remoteJid} (link spam)`);
+                                } catch (err) {}
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
         }
 
         // ==================== AUDIO / VOICE NOTE ====================
@@ -226,7 +340,9 @@ export async function handleMessage(sock, msg) {
 
                 let docText = '';
                 if (isPDF) {
-                    const data = await PDFParse(buffer);
+                    const PDFParser = pdfParse.PDFParse || pdfParse;
+                    const parser = new PDFParser(buffer);
+                    const data = await parser.parse();
                     docText = (data?.text || '').substring(0, 3000);
                 } else if (fileName.toLowerCase().endsWith('.docx')) {
                     const result = await mammoth.extractRawText({ buffer });
@@ -261,6 +377,11 @@ export async function handleMessage(sock, msg) {
 
         // Re-parse command & args in case text changed (transcript)
         ({ command, args } = parseCommand(text));
+
+        // Simpan konteks hanya untuk user yang sudah terverifikasi whitelist
+        if (CONFIG.groupContextEnabled && text) {
+            addContextMessage(remoteJid, sender, text);
+        }
 
         // ==================== SKILL COMMAND DISPATCH ====================
         if (command) {
@@ -342,8 +463,41 @@ export async function handleMessage(sock, msg) {
             return;
         }
 
-    } catch (error) {
-        console.error('❌ Error handling message:', error.message);
+        // ==================== SMART NIMBRUNG (Community Admin) ====================
+        // Bot bisa nimbrung kyk admin beneran kalo ada yg minta tolong di grup
+        if (isGroup && !command && text) {
+            try {
+                const cfg = getModerationConfig(remoteJid);
+                if (cfg && cfg.enabled) {
+                    const targetJid = cfg.announcementGroupJid || remoteJid;
+                    const now = Date.now();
+                    const lastChime = nimbrungCooldowns.get(remoteJid) || 0;
+                    
+                    // Deteksi minta tolong / bantuan
+                    const helpPattern = /(tolong|bantuan|bantu|minta tolong|gimana cara|bagaimana|cara pakai|ada yang tau|siapa yang bisa|help|how to|what is|anyone know|ada masalah|error|gak bisa|ga bisa|tidak bisa|rusak)/i;
+                    const isHelpRequest = helpPattern.test(text);
+                    
+                    // Chime in kalo ada yg minta tolong (cooldown 5 menit per grup)
+                    if (isHelpRequest && (now - lastChime) > 300000) {
+                        nimbrungCooldowns.set(remoteJid, now);
+                        
+                        console.log('[NIMBRUNG] Detected help request in', remoteJid, ':', text.substring(0, 50));
+                        await sock.sendPresenceUpdate('composing', targetJid);
+                        const mode = getMode(remoteJid);
+                        const promptText = `(Seseorang di grup WhatsApp minta bantuan/bertanya: "${text.substring(0, 200)}")\n\nJawab dengan ramah dan membantu sebagai admin bot yang peduli. Berikan solusi atau bantuan yang relevan. Jika tidak tahu, arahkan ke admin grup.`;
+                        const response = await chatWithContext(promptText, mode, remoteJid);
+                        await sock.sendMessage(targetJid, { text: response });
+                        log('NIMBRUNG', `Chimed in on help request in ${remoteJid}`);
+                        return;
+                    }
+                }
+            } catch (err) {
+                console.error('❌ Smart nimbrung error:', err.message);
+            }
+        }
+
+    } catch (err) {
+        error('Gagal handle message', err);
         try {
             await sock.sendMessage(msg.key.remoteJid, { text: '❌ Maaf, ada error. Coba lagi ya.' });
         } catch (e) {}
@@ -352,7 +506,7 @@ export async function handleMessage(sock, msg) {
 
 // ==================== HELPER FUNCTIONS ====================
 
-function getMessageText(msg) {
+export function getMessageText(msg) {
     const msgType = Object.keys(msg.message || {}).find(
         type => !type.startsWith('contextInfo') && !type.endsWith('MessagePlaceholder')
     );

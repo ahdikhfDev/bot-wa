@@ -20,11 +20,11 @@ function splitEnvList(value) {
 
 export function normalizeJidId(jid = '') {
     if (typeof jid !== 'string') return '';
-    // JID WhatsApp biasanya formatnya: nomor@s.whatsapp.net atau nomor:ad@s.whatsapp.net
-    // Kita hanya mau ambil 'nomor'-nya saja.
+    // JID WhatsApp: nomor@s.whatsapp.net, nomor:device@s.whatsapp.net, nomor.0@s.whatsapp.net
+    // Hanya ambil nomor tanpa @suffix, :device, atau .suffix
     const part = jid.split('@')[0];
     if (!part) return '';
-    return part.split(':')[0].trim();
+    return part.split(':')[0].split('.')[0].trim();
 }
 
 export function getOwnerIds() {
