@@ -10,6 +10,15 @@ import { getEdgeTtsBuffer, VOICES } from "./edgeTts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const TEMPLATE_DIR = path.join(__dirname, '../../assets/videos');
+const TEMPLATE_FILES = ['bg-gradient.mp4', 'bg-abstract.mp4', 'bg-warm.mp4', 'bg-dark.mp4', 'bg-nature.mp4'];
+
+function getRandomTemplate() {
+    const available = TEMPLATE_FILES.filter(f => fs.existsSync(path.join(TEMPLATE_DIR, f)));
+    if (available.length === 0) return null;
+    return path.join(TEMPLATE_DIR, available[Math.floor(Math.random() * available.length)]);
+}
+
 // ─── Script Style Prompts ───
 const SCRIPT_STYLES = {
     edukasi: [
@@ -176,8 +185,8 @@ const TARGET_DURATION = 65;
 
 const TMP_WORKDIR_PREFIX = "thirty-video-";
 const CLEANUP_MAX_AGE_MS = parseInt(process.env.VIDEO_TMP_CLEANUP_MAX_AGE_MS || String(24 * 60 * 60 * 1000), 10);
-const IMAGE_MAX_RETRIES_PER_SCENE = parseInt(process.env.VIDEO_IMAGE_MAX_RETRIES || "12", 10);
-const IMAGE_RETRY_DELAY_MS = parseInt(process.env.VIDEO_IMAGE_RETRY_DELAY_MS || "2500", 10);
+const IMAGE_MAX_RETRIES_PER_SCENE = parseInt(process.env.VIDEO_IMAGE_MAX_RETRIES || "3", 10);
+const IMAGE_RETRY_DELAY_MS = parseInt(process.env.VIDEO_IMAGE_RETRY_DELAY_MS || "2000", 10);
 
 function enforceDuration(scenes) {
     const total = scenes.reduce((s, c) => s + (c.durasi_detik || 10), 0);
@@ -299,14 +308,20 @@ async function generateScript(topic, style = 'edukasi') {
     throw lastError || new Error("Gagal generate script setelah 3 percobaan");
 }
 
-async function generateImageFromPollinations(prompt, timeoutMs = 15000) {
-    const url = "https://image.pollinations.ai/prompt/" +
-        encodeURIComponent(prompt + ", digital illustration, 9:16") +
-        "?width=720&height=1280";
-    const resp = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-    if (!resp.ok) return null;
-    const buf = Buffer.from(await resp.arrayBuffer());
-    return buf.length > 1000 ? buf : null;
+async function generateImageFromPollinations(prompt, timeoutMs = 30000) {
+    const urls = [
+        "https://image.pollinations.ai/prompt/" + encodeURIComponent(prompt + ", digital illustration, 9:16") + "?width=720&height=1280&nofeed=true",
+        "https://image.pollinations.ai/prompt/" + encodeURIComponent(prompt) + "?width=720&height=1280&nofeed=true",
+    ];
+    for (const url of urls) {
+        try {
+            const resp = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+            if (!resp.ok) continue;
+            const buf = Buffer.from(await resp.arrayBuffer());
+            if (buf.length > 1000) return buf;
+        } catch {}
+    }
+    return null;
 }
 
 function makePrompt(scene, style) {
@@ -323,7 +338,7 @@ async function generateImages(scenes, workDir, onProgress) {
     const total = scenes.length;
     const imagePaths = [];
 
-    onProgress("Bikin gambar via Pollinations...");
+    onProgress("Coba bikin gambar via Pollinations...");
 
     for (let i = 0; i < total; i++) {
         const sceneNo = i + 1;
@@ -347,13 +362,14 @@ async function generateImages(scenes, workDir, onProgress) {
             }
         }
 
-        if (!buf) {
-            throw new Error("Pollinations gagal untuk scene " + sceneNo + " setelah " + IMAGE_MAX_RETRIES_PER_SCENE + " percobaan");
+        if (buf) {
+            const imgPath = path.join(workDir, "img" + i + ".jpg");
+            fs.writeFileSync(imgPath, buf);
+            imagePaths.push(imgPath);
+        } else {
+            onProgress("Scene " + sceneNo + "/" + total + " - Pollinations skip (fallback template)");
+            imagePaths.push(null);
         }
-
-        const imgPath = path.join(workDir, "img" + i + ".jpg");
-        fs.writeFileSync(imgPath, buf);
-        imagePaths.push(imgPath);
     }
 
     return imagePaths;
@@ -377,7 +393,16 @@ export async function generateVideo(topic, onProgress, style = 'edukasi') {
             const enforcedTotal = data.scenes.reduce((s, c) => s + (c.durasi_detik || 10), 0);
             onProgress("Durasi: " + enforcedTotal + " detik");
 
-            const imagePaths = await generateImages(data.scenes, workDir, onProgress);
+            onProgress("Coba generate gambar...");
+            const imagePaths = await generateImages(data.scenes, workDir, onProgress).catch(() => scenes.map(() => null));
+            const imgCount = imagePaths.filter(Boolean).length;
+            if (imgCount === 0) {
+                onProgress("Gambar dari AI skip (Pollinations error), pake template background");
+            } else if (imgCount < total) {
+                onProgress("Dapet " + imgCount + "/" + total + " gambar, sisanya pake template");
+            } else {
+                onProgress("Semua gambar jadi!");
+            }
 
             onProgress("Generate suara natural via Edge-TTS... (0/" + total + ")");
             const audioPaths = [];
@@ -449,6 +474,8 @@ function textToSrt(text, durSec) {
 
 async function assembleVideo(scenes, imagePaths, audios, workDir, outputPath) {
     const segments = [];
+    const templateFile = getRandomTemplate();
+    const hasTemplate = templateFile && fs.existsSync(templateFile);
 
     for (let i = 0; i < scenes.length; i++) {
         const segPath = path.join(workDir, "s" + i + ".mp4");
@@ -456,39 +483,101 @@ async function assembleVideo(scenes, imagePaths, audios, workDir, outputPath) {
 
         const dur = scenes[i].durasi_detik || 10;
         const fps = 25;
-        const frameCount = dur * fps;
         const srtFile = path.join(workDir, "sr" + i + ".srt");
         fs.writeFileSync(srtFile, textToSrt(scenes[i].narasi || "", dur), "utf8");
 
         const img = imagePaths[i];
-        const zoomEnd = 1.2;
-        const zoomStep = (zoomEnd - 1) / frameCount;
 
-        const vf = [
-            "scale=720*1.1:1280*1.1:force_original_aspect_ratio=increase,crop=720:1280",
-            "zoompan=z='min(1+" + zoomStep + "*on," + zoomEnd + ")':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=" + frameCount + ":s=720x1280:fps=" + fps,
-            "subtitles=" + srtFile + ":force_style='FontSize=15,Alignment=2,MarginV=65'"
-        ].join(",");
+        if (hasTemplate && !img) {
+            const templateLoop = path.join(workDir, "temploop" + i + ".ts");
+            await runFF([
+                "-stream_loop", "-1", "-i", templateFile,
+                "-t", String(dur),
+                "-c", "copy", "-y", templateLoop
+            ]);
 
-        await runFF([
-            "-loop", "1", "-i", img,
-            "-i", audios[i],
-            "-vf", vf,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
-            "-t", String(dur), "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-shortest",
-            "-y", segPath
-        ]);
+            await runFF([
+                "-i", templateLoop,
+                "-i", audios[i],
+                "-vf", "subtitles=" + srtFile + ":force_style='FontSize=18,Alignment=2,MarginV=65'",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
+                "-c:a", "aac", "-b:a", "128k", "-shortest",
+                "-pix_fmt", "yuv420p",
+                "-y", segPath
+            ]);
+        } else if (hasTemplate && img) {
+            const templateLoop = path.join(workDir, "temploop" + i + ".ts");
+            await runFF([
+                "-stream_loop", "-1", "-i", templateFile,
+                "-t", String(dur),
+                "-c", "copy", "-y", templateLoop
+            ]);
+
+            const frameCount = dur * fps;
+            const zoomEnd = 1.15;
+            const zoomStep = (zoomEnd - 1) / frameCount;
+            const zoomFilter = "zoompan=z='min(1+" + zoomStep + "*on," + zoomEnd + ")':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=" + frameCount + ":s=720x1280:fps=" + fps;
+
+            await runFF([
+                "-i", templateLoop,
+                "-loop", "1", "-i", img,
+                "-i", audios[i],
+                "-filter_complex",
+                "[1:v]" + zoomFilter + "[img];" +
+                "[0:v][img]overlay=(W-w)/2:(H-h)/2:format=auto,format=yuv420p[v];" +
+                "[v]subtitles=" + srtFile + ":force_style='FontSize=18,Alignment=2,MarginV=65'[vout]",
+                "-map", "[vout]", "-map", "2:a",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
+                "-c:a", "aac", "-b:a", "128k", "-shortest",
+                "-pix_fmt", "yuv420p",
+                "-y", segPath
+            ]);
+        } else {
+            const frameCount = dur * fps;
+            const zoomEnd = 1.2;
+            const zoomStep = (zoomEnd - 1) / frameCount;
+
+            const vf = [
+                "scale=720*1.1:1280*1.1:force_original_aspect_ratio=increase,crop=720:1280",
+                "zoompan=z='min(1+" + zoomStep + "*on," + zoomEnd + ")':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=" + frameCount + ":s=720x1280:fps=" + fps,
+                "subtitles=" + srtFile + ":force_style='FontSize=15,Alignment=2,MarginV=65'"
+            ].join(",");
+
+            await runFF([
+                "-loop", "1", "-i", img,
+                "-i", audios[i],
+                "-vf", vf,
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
+                "-t", String(dur), "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k", "-shortest",
+                "-y", segPath
+            ]);
+        }
     }
 
-    const filelist = path.join(workDir, "list.txt");
-    fs.writeFileSync(filelist, segments.map(s => "file '" + s + "'").join("\n"));
+    if (segments.length > 1) {
+        const tempConcat = path.join(workDir, "concat.ts");
+        const filelist = path.join(workDir, "list.txt");
+        fs.writeFileSync(filelist, segments.map(s => "file '" + s + "'").join("\n"));
+        await runFF(["-f", "concat", "-safe", "0", "-i", filelist, "-c", "copy", "-y", tempConcat]);
 
-    await runFF([
-        "-f", "concat", "-safe", "0", "-i", filelist,
-        "-c", "copy", "-movflags", "+faststart",
-        "-y", outputPath
-    ]);
+        await runFF([
+            "-i", tempConcat,
+            "-vf", "fade=t=in:st=0:d=0.5,fade=t=out:st=" + (scenes.reduce((s, c) => s + (c.durasi_detik || 10), 0) - 0.5) + ":d=0.5",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-y", outputPath
+        ]);
+    } else {
+        const filelist = path.join(workDir, "list.txt");
+        fs.writeFileSync(filelist, segments.map(s => "file '" + s + "'").join("\n"));
+        await runFF([
+            "-f", "concat", "-safe", "0", "-i", filelist,
+            "-c", "copy", "-movflags", "+faststart",
+            "-y", outputPath
+        ]);
+    }
 }
 
 // ─── Konten Multi-Scene (Viral Style, 1+ Menit) ───
@@ -518,7 +607,16 @@ export async function generateKonten(topic, onProgress, style = 'fakta') {
             const enforcedTotal = data.scenes.reduce((s, c) => s + (c.durasi_detik || 10), 0);
             onProgress("Durasi: " + enforcedTotal + " detik");
 
-            const imagePaths = await generateImages(data.scenes, workDir, onProgress);
+            onProgress("Coba generate gambar...");
+            const imagePaths = await generateImages(data.scenes, workDir, onProgress).catch(() => scenes.map(() => null));
+            const imgCount = imagePaths.filter(Boolean).length;
+            if (imgCount === 0) {
+                onProgress("Gambar dari AI skip (Pollinations error), pake template background");
+            } else if (imgCount < total) {
+                onProgress("Dapet " + imgCount + "/" + total + " gambar, sisanya pake template");
+            } else {
+                onProgress("Semua gambar jadi!");
+            }
 
             onProgress("Generate suara natural via Edge-TTS... (0/" + total + ")");
             const audioPaths = [];
