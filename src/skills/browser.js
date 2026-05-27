@@ -1,4 +1,5 @@
 import { runBrowserAgent } from '../services/browserAgent.js';
+import { error as logError } from '../utils/logger.js';
 
 export default {
     name: 'browser',
@@ -41,7 +42,7 @@ export default {
                 text: `✅ *Browser Agent Selesai*\n\n${result}` 
             });
         } catch (err) {
-            console.error('Browser Skill Error:', err);
+            logError('Browser Skill', err);
             await sock.sendMessage(remoteJid, { 
                 text: `❌ *Browser Agent Gagal*\nError: ${err.message}` 
             });

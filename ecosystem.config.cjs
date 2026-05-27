@@ -1,14 +1,14 @@
 module.exports = {
-  apps: [{
-    name: 'bot-wa',
-    script: './src/index.js',
-    env: {
-      NODE_ENV: 'production',
-    },
-    max_restarts: 5,
-    restart_delay: 5000,
-    max_memory_restart: '500M',
-    kill_timeout: 5000,
-    exp_backoff_restart_delay: 100,
-  }]
+    apps: [{
+        name: 'bot-wa',
+        script: 'src/index.js',
+        watch: false,
+        max_memory_restart: '500M',
+        env: {
+            NODE_ENV: 'production',
+        },
+        error_file: 'logs/pm2-error.log',
+        out_file: 'logs/pm2-out.log',
+        time: true,
+    }]
 };

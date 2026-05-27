@@ -49,4 +49,4 @@ async function linkDevice() {
     });
 }
 
-linkDevice().catch(console.error);
+linkDevice().catch(err => { console.error('Link device error:', err); process.exit(1); });

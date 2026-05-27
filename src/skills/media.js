@@ -6,6 +6,7 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import ffmpegPath from 'ffmpeg-static';
+import { error as logError } from '../utils/logger.js';
 
 const execFileAsync = promisify(execFile);
 const ffmpegBin = process.env.FFMPEG_PATH || ffmpegPath || 'ffmpeg';
@@ -92,7 +93,7 @@ export default {
                     ptt: true
                 });
             } catch (err) {
-                console.error('/say error:', err.message);
+                logError('/say', err);
                 await sock.sendMessage(remoteJid, {
                     text: '❌ Gagal: ' + err.message.substring(0, 200)
                 });

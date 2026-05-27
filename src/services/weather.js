@@ -1,4 +1,5 @@
 import { formatKeyValue } from '../utils/waformat.js';
+import { error as logError } from '../utils/logger.js';
 
 const UA = 'ThirtyBot/1.0';
 
@@ -66,7 +67,7 @@ export async function getWeather(city) {
             uvIndex: cur.uvIndex,
         };
     } catch (err) {
-        console.error('❌ Weather error:', err.message);
+        logError('Weather error', err);
         return { error: `Gagal cek cuaca untuk "${city}".` };
     }
 }

@@ -1,4 +1,5 @@
 /**
+import { error as logError } from '../utils/logger.js';
  * Get jadwal sholat via Aladhan API with KEMENAG method
  * API: https://aladhan.com/prayer-times-api
  * Method 11 = Kementerian Agama Republik Indonesia
@@ -162,7 +163,7 @@ export default {
             const jadwal = await getJadwal(city, province);
             await sock.sendMessage(remoteJid, { text: formatJadwal(jadwal, city, province) });
         } catch (err) {
-            console.error('Sholat Error:', err.message);
+            logError('Sholat', err);
 
             // If city not found in API, try with just "Jakarta" as fallback
             if (!KNOWN_CITIES[query]) {

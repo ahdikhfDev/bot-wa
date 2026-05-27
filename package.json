@@ -8,7 +8,15 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "link": "node src/link.js",
-    "web": "node src/server/index.js"
+    "web": "node src/server/index.js",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop bot-wa",
+    "pm2:restart": "pm2 restart bot-wa",
+    "pm2:logs": "pm2 logs bot-wa",
+    "pm2:save": "pm2 save",
+    "pm2:startup": "pm2 startup",
+    "pm2:status": "pm2 status",
+    "pm2:monit": "pm2 monit"
   },
   "keywords": [
     "whatsapp",

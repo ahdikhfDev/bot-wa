@@ -11,6 +11,7 @@
 
 import { saveDb } from './db.js';
 import { getDb } from './db.js';
+import { log, error as logError } from '../utils/logger.js';
 
 let schedulerRunning = false;
 let pollInterval = null;
@@ -40,7 +41,7 @@ export function addJob(name, chatId, hour, minute, actionType, actionParams = {}
         saveDb();
         return name;
     } catch (err) {
-        console.error('❌ Scheduler addJob error:', err.message);
+        logError('Scheduler addJob', err);
         return null;
     }
 }
@@ -183,7 +184,7 @@ async function getCachedPrayerTimes(city, province) {
         prayerCache.set(cacheKey, { times, fetchedAt: Date.now(), date: today });
         return times;
     } catch (err) {
-        console.error('❌ Prayer API error:', err.message);
+        logError('Scheduler prayer API', err);
         return cached?.times || null;
     }
 }
@@ -212,7 +213,7 @@ const actionHandlers = {
         try {
             await sock.sendMessage(job.chat_id, { text });
         } catch (err) {
-            console.error('❌ Scheduler message error:', err.message);
+            logError('Scheduler message', err);
         }
     },
 
@@ -240,7 +241,7 @@ const actionHandlers = {
                 await sock.sendMessage(job.chat_id, { text: `❌ Gagal mendapatkan berita untuk "${searchQuery}".` });
             }
         } catch (err) {
-            console.error('❌ Scheduler news error:', err.message);
+            logError('Scheduler news', err);
         }
     },
 
@@ -263,7 +264,7 @@ const actionHandlers = {
                 text: `⏰ *Waktu ${prayer}* ⏰\n${emoji} *${prayer}*: ${time}\n📍 ${city}${daerah}\n━━━━━━━━━━━━━━━━━\n_Sumber: Aladhan API (Kemenag RI)_`
             });
         } catch (err) {
-            console.error('❌ Scheduler sholat_notif error:', err.message);
+            logError('Scheduler sholat_notif', err);
         }
     },
 
@@ -289,7 +290,7 @@ const actionHandlers = {
             const formatted = formatMorningDigest(digest);
             await sock.sendMessage(targetJid, { text: formatted.substring(0, 4000) });
         } catch (err) {
-            console.error('❌ Scheduler it_digest error:', err.message);
+            logError('Scheduler it_digest', err);
         }
     },
 
@@ -316,7 +317,7 @@ const actionHandlers = {
             await sock.sendMessage(targetJid, { text: greeting });
             log('MORNING_GREETING', `Sent morning greeting to ${targetJid}`);
         } catch (err) {
-            console.error('❌ Morning greeting error:', err.message);
+            logError('Scheduler morning_greeting', err);
         }
     },
 
@@ -344,7 +345,7 @@ const actionHandlers = {
                 });
             }
         } catch (err) {
-            console.error('❌ Scheduler custom error:', err.message);
+            logError('Scheduler custom', err);
         }
     }
 };
@@ -390,14 +391,14 @@ async function tick(sock) {
                 if (handler) {
                     // Run async but don't await (parallel execution)
                     handler(sock, job).catch(err => {
-                        console.error(`❌ Scheduler job "${job.name}" error:`, err.message);
+                        logError(`Scheduler job "${job.name}"`, err);
                     });
                 }
                 updateJobRunDate(job.name, today);
             }
         }
     } catch (err) {
-        console.error('❌ Scheduler tick error:', err.message);
+        logError('Scheduler tick', err);
     }
 }
 
@@ -466,7 +467,7 @@ function startPrayerTimer(sock) {
                     }
                 }
             } catch (err) {
-                console.error('❌ Prayer tracker error for', chatId, ':', err.message);
+                logError('Prayer tracker for ' + chatId, err);
             }
         }
     }, 8 * 60 * 1000); // Every 8 minutes

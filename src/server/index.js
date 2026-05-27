@@ -56,7 +56,8 @@ function requireAuth(req, res, next) {
     next();
 }
 
-let botStatus = { connected: false, startTime: Date.now(), messageCount: 0, totalCumulative: 0, sessionStartTime: Date.now() };
+let botStatus = { connected: false, startTime: Date.now(), messageCount: 0, totalCumulative: 0, sessionStartTime: Date.now(), accumulatedUptime: 0 };
+let uptimeSaveTimer = null;
 let sockRef = null;
 
 // SSE (Server-Sent Events) clients
@@ -80,7 +81,7 @@ function initBotStats() {
 
 export function setBotStatus(connected) {
     botStatus.connected = connected;
-    broadcastSSE('bot-status', { connected, uptime: Math.floor((Date.now() - botStatus.startTime) / 1000) });
+    broadcastSSE('bot-status', { connected, uptime: getTotalUptime() });
 }
 
 export function incrementMessageCount() {
@@ -110,6 +111,10 @@ const KNOWN_API_KEYS = [
 
 const SENSITIVE_KEYS = ['GROQ_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', '9ROUTER_API_KEY', 'TAVILY_API_KEY', 'GNEWS_API_KEY', 'dashboard_token', 'dashboard_password'];
 
+function getTotalUptime() {
+    return botStatus.accumulatedUptime + Math.floor((Date.now() - botStatus.startTime) / 1000);
+}
+
 export function startServer() {
     // Set initial password on first run from env or random fallback
     if (!getSetting(PASSWORD_KEY)) {
@@ -129,6 +134,13 @@ export function startServer() {
     botStatus.sessionStartTime = Date.now();
     botStatus.messageCount = parseInt(getSetting('stats_total_messages', '0'));
     botStatus.totalCumulative = parseInt(getSetting('stats_total_cumulative', '0'));
+    botStatus.accumulatedUptime = parseInt(getSetting('stats_accumulated_uptime', '0'));
+    // Save accumulated uptime every 60s
+    if (uptimeSaveTimer) clearInterval(uptimeSaveTimer);
+    uptimeSaveTimer = setInterval(() => {
+        botStatus.accumulatedUptime = getTotalUptime();
+        setSetting('stats_accumulated_uptime', String(botStatus.accumulatedUptime));
+    }, 60000);
 
     // Seed env vars to DB so web dashboard can see/manage them
     const envToSeed = ['GROQ_API_KEY', 'GROQ_MODEL', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'TAVILY_API_KEY', 'GNEWS_API_KEY', '9ROUTER_API_KEY'];
@@ -150,6 +162,7 @@ export function startServer() {
     app.use(express.json());
 
     // Rate limiting untuk endpoint API
+    app.set("trust proxy", 1);
     const apiLimiter = rateLimit({
         windowMs: 15 * 60 * 1000, // 15 menit
         max: 300, // max 300 request per window
@@ -219,7 +232,7 @@ export function startServer() {
         const tokenUsage = getTokenUsageSummary();
         res.json({
             ...botStatus,
-            uptime: Math.floor((Date.now() - botStatus.startTime) / 1000),
+            uptime: getTotalUptime(),
             skillsCount: getSkillNames().length,
             whitelistCount: getAllWhitelist().length,
             firstStart: getSetting('stats_first_start'),
@@ -637,7 +650,7 @@ app.post('/api/provider', (req, res) => {
             'Connection': 'keep-alive',
         });
         // Kirim status awal
-        const uptime = Math.floor((Date.now() - botStatus.startTime) / 1000);
+        const uptime = getTotalUptime();
         res.write(`event: initial\ndata: ${JSON.stringify({ ...botStatus, uptime })}\n\n`);
         sseClients.add(res);
         req.on('close', () => sseClients.delete(res));
@@ -795,3 +808,6 @@ app.listen(PORT, '0.0.0.0', () => {
         console.log(`🌐 Bot-WA Dashboard: http://0.0.0.0:${PORT}`);
     });
 }
+
+// Exported for shutdown hook
+export { getTotalUptime, uptimeSaveTimer, botStatus };

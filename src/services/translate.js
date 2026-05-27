@@ -1,4 +1,5 @@
 import { callAI } from './ai.js';
+import { error as logError } from '../utils/logger.js';
 
 /**
  * Translate text using AI
@@ -13,7 +14,7 @@ export async function translate(text, targetLang = 'Indonesia') {
         const result = await callAI(prompt, [], 'formal');
         return result.trim();
     } catch (err) {
-        console.error('Translation error:', err.message);
+        logError('Translation error', err);
         throw new Error('Gagal menerjemahkan teks.');
     }
 }

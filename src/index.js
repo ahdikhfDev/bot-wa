@@ -16,6 +16,14 @@ import { getLinkPreview } from 'link-preview-js';
 
 const msgDedup = new Set();
 const DEDUP_WINDOW = 3000;
+const MSG_DEDUP_MAX_SIZE = 500;
+// Bersihin msgDedup tiap 5 menit biar gak bocor memory
+setInterval(() => {
+    if (msgDedup.size > MSG_DEDUP_MAX_SIZE) {
+        msgDedup.clear();
+        log("MSG_DEDUP", "Cleared dedup set (was > " + MSG_DEDUP_MAX_SIZE + ")");
+    }
+}, 5 * 60 * 1000);
 
 const logger = P({ level: "info" }).child({ class: "Main" });
 let reconnectAttempts = 0;
@@ -25,8 +33,8 @@ let reminderInterval = null;
 
 let signalHandlersRegistered = false;
 
-function exitBot(code = 0) {
-    flushDb();
+async function exitBot(code = 0) {
+    await flushDb().catch(() => {});
     process.exit(code);
 }
 
@@ -44,13 +52,21 @@ async function initializeApp() {
 function registerSignalHandlers() {
     if (signalHandlersRegistered) return;
     signalHandlersRegistered = true;
-    const shutdown = (signal) => {
+    const shutdown = async (signal) => {
         log("SHUTDOWN", signal + " diterima. Bot mati.");
         if (cleanupInterval) clearInterval(cleanupInterval);
         if (reminderInterval) clearInterval(reminderInterval);
         for (const [jid] of pendingBroadcasts) {
             deletePendingBroadcast(jid);
         }
+        // Save accumulated uptime before exit
+        try {
+            const mod = await import('./server/index.js');
+            if (mod.uptimeSaveTimer) clearInterval(mod.uptimeSaveTimer);
+            const uptime = mod.getTotalUptime ? mod.getTotalUptime() : 0;
+            const { setSetting } = await import('./services/db.js');
+            setSetting('stats_accumulated_uptime', String(uptime));
+        } catch(e) { /* non-critical */ }
         exitBot(0);
     };
     process.once("SIGINT", () => shutdown("SIGINT"));
@@ -154,7 +170,7 @@ async function startBot() {
                                     text: `🤖 *Thirty Bot Online!* 🟢\n\nBot aktif dan siap membantu!\n\n📌 *Fitur Aktif:*\n• 🛡️ Moderasi Community\n• 📰 IT Digest otomatis\n• 🔗 Auto Link Preview\n• 👋 Auto Welcome\n\nAda yang bisa dibantu? Ketik /help`
                                 });
                             }
-                        } catch {}
+                        } catch { warn('Auto link preview gagal'); }
                     }
                 } catch (err) {
                     warn('Gagal kirim notifikasi online: ' + err.message);
@@ -174,12 +190,12 @@ async function startBot() {
                             });
                             incrementReminderRetry(r.id);
                         } catch (err) {
-                            console.error('❌ Gagal kirim reminder:', err.message);
+                            error('Reminder gagal', err);
                         }
                     }
                     expireOldReminders();
                 } catch (err) {
-                    console.error('❌ Reminder polling error:', err.message);
+                    error('Reminder polling', err);
                 }
             }, 30000);
         }
@@ -223,7 +239,7 @@ Semoga betah ya! 🥳`,
                             mentions: [participantJid]
                         });
                     } catch (err) {
-                        console.error('❌ Auto-welcome error:', err.message);
+                        error('Auto-welcome', err);
                     }
                 }
             } else if (action === 'remove') {
@@ -244,12 +260,12 @@ Semoga betah ya! 🥳`,
                             mentions: [participantJid]
                         });
                     } catch (err) {
-                        console.error('❌ Auto-leave notification error:', err.message);
+                        error('Auto-leave notification', err);
                     }
                 }
             }
         } catch (err) {
-            console.error('❌ Group participants handler error:', err.message);
+            error('Group participants handler', err);
         }
     });
 
@@ -304,7 +320,7 @@ Semoga betah ya! 🥳`,
                                             await queuedSock.sendMessage(remoteJid, { image: imgBuffer, caption: text });
                                             return;
                                         }
-                                    } catch {}
+                                    } catch { warn('Auto link preview gagal'); }
                                 }
                                 await queuedSock.sendMessage(remoteJid, { text });
                             }
@@ -323,4 +339,4 @@ Semoga betah ya! 🥳`,
 
 }
 
-startBot().catch(console.error);
+startBot().catch(err => { error('Startup fatal', err); });

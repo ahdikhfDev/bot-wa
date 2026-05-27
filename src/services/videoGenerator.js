@@ -1,6 +1,7 @@
 import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
+import { warn } from '../utils/logger.js';
 import ffmpegPath from "ffmpeg-static";
 import { execFile } from "child_process";
 import Groq from "groq-sdk";
@@ -223,12 +224,12 @@ function extractJson(text) {
         .replace(/,\s*\]/g, ']');
     try {
         return JSON.parse(cleaned);
-    } catch {}
+    } catch (e) { warn('VideoGen: ' + e.message); }
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
         try {
             return JSON.parse(match[0]);
-        } catch {}
+        } catch (e) { warn('VideoGen: ' + e.message); }
     }
     return null;
 }
@@ -286,7 +287,7 @@ async function generateScript(topic, style = 'edukasi') {
                         if (parsed && parsed.scenes && parsed.scenes.length) {
                             return parsed;
                         }
-                    } catch {}
+                    } catch (e) { warn('VideoGen: ' + e.message); }
                 }
             }
             if (attempt < 2) {
@@ -402,10 +403,10 @@ export async function generateVideo(topic, onProgress, style = 'edukasi') {
             const sizeMB = (fs.statSync(outputPath).size / 1024 / 1024).toFixed(1);
             onProgress("Video siap! (" + sizeMB + "MB)");
 
-            try { fs.unlinkSync(path.join(workDir, ".active")); } catch {}
+            try { fs.unlinkSync(path.join(workDir, ".active")); } catch (e) { warn('VideoGen: ' + e.message); }
             return { outputPath, workDir, title: data.title };
         } catch (err) {
-            try { fs.unlinkSync(path.join(workDir, ".active")); } catch {}
+            try { fs.unlinkSync(path.join(workDir, ".active")); } catch (e) { warn('VideoGen: ' + e.message); }
             cleanup(workDir);
             throw err;
         } finally {
@@ -540,10 +541,10 @@ export async function generateKonten(topic, onProgress, style = 'fakta') {
             const sizeMB = (fs.statSync(outputPath).size / 1024 / 1024).toFixed(1);
             onProgress("Video siap! (" + sizeMB + "MB)");
 
-            try { fs.unlinkSync(path.join(workDir, ".active")); } catch {}
+            try { fs.unlinkSync(path.join(workDir, ".active")); } catch (e) { warn('VideoGen: ' + e.message); }
             return { outputPath, workDir, title: data.title };
         } catch (err) {
-            try { fs.unlinkSync(path.join(workDir, ".active")); } catch {}
+            try { fs.unlinkSync(path.join(workDir, ".active")); } catch (e) { warn('VideoGen: ' + e.message); }
             cleanup(workDir);
             throw err;
         } finally {
@@ -592,9 +593,9 @@ export function cleanupAll() {
                 if (fs.existsSync(path.join(fullPath, ".active"))) continue;
                 fs.rmSync(fullPath, { recursive: true, force: true });
                 console.log("Cleaned up: " + fullPath);
-            } catch {}
+            } catch (e) { warn('VideoGen: ' + e.message); }
         }
     } catch (err) {
-        console.warn("Warning: Failed to cleanup /tmp:", err.message);
+        warn('VideoGen cleanup: ' + err.message);
     }
 }

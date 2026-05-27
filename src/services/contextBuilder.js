@@ -1,4 +1,5 @@
 import { getGroupHistory, getConversationSummary, getUserProfile, searchMemoriesRAG, getSetting, saveConversationSummary } from './db.js';
+import { warn } from '../utils/logger.js';
 import Groq from 'groq-sdk';
 
 const MAX_HISTORY_TOKENS = 2500;
@@ -43,7 +44,7 @@ export function buildContext(chatId, prompt, includeHistoryInText = true) {
     if (chatId && prompt) {
         try {
             memories = searchMemoriesRAG(chatId, prompt, 4);
-        } catch {}
+        } catch (e) { warn('RAG search error: ' + e.message); }
     }
     if (memories.length > 0) {
         const memText = memories.map((m, i) => `- ${m.content}`).join('\n');
@@ -131,6 +132,6 @@ export async function summarizeConversationAsync(chatId) {
             console.log(`📝 Summary saved for ${chatId}: ${summary.substring(0, 80)}...`);
         }
     } catch (err) {
-        console.warn('⚠️ Summarize error:', err.message);
+        warn('Summarize error: ' + err.message);
     }
 }

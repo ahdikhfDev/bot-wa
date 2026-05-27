@@ -45,7 +45,7 @@ export async function searchTavily(query) {
         }));
         return { items, source: 'tavily' };
     } catch (err) {
-        console.error('❌ Tavily error:', err.message);
+        logError('Tavily search', err);
         return null;
     }
 }
@@ -67,7 +67,7 @@ export async function searchBing(query) {
         });
 
         if (!r.ok) {
-            console.error('❌ Bing search status:', r.status);
+            logError('Bing search status: ' + r.status);
             return null;
         }
 
@@ -97,13 +97,13 @@ export async function searchBing(query) {
         });
 
         if (items.length === 0) {
-            console.error('❌ Bing search: no results extracted');
+            logError('Bing search: no results extracted');
             return null;
         }
 
         return { items, source: 'bing' };
     } catch (err) {
-        console.error('❌ Bing search error:', err.message);
+        logError('Bing search error', err);
         return null;
     }
 }
@@ -129,13 +129,13 @@ export async function searchWikipedia(query) {
                 const extR = await fetchWithTimeout(extUrl, { headers: { 'User-Agent': UA } });
                 const extD = await extR.json();
                 snippet = extD.extract?.substring(0, 200) || '';
-            } catch {}
+            } catch (e) { logError("Wikipedia search empty", e); }
             items.push({ title, url: link, snippet });
         }
 
         return { items, source: 'wikipedia' };
     } catch (err) {
-        console.error('❌ Wikipedia search error:', err.message);
+        logError('Wikipedia search error', err);
         return { error: 'Gagal mencari. Coba lagi nanti.' };
     }
 }
@@ -175,7 +175,7 @@ export async function searchNews(query) {
                 return { items, source: 'berita' };
             }
         } catch (err) {
-            console.error('❌ GNews error:', err.message);
+            logError('GNews error', err);
         }
     }
     return await searchWikipedia(query + ' news');

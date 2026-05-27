@@ -19,6 +19,34 @@ import {
 const spamCooldowns = new Map();
 setInterval(() => spamCooldowns.clear(), 60 * 60 * 1000);
 
+// Per-user rate limiting: max N AI requests per minute
+const userRateLimits = new Map();
+const RATE_LIMIT_MAX = 10;    // max 10 requests
+const RATE_LIMIT_WINDOW = 60 * 1000; // per 60 detik
+
+function checkRateLimit(userJid) {
+    const now = Date.now();
+    if (!userRateLimits.has(userJid)) {
+        userRateLimits.set(userJid, []);
+    }
+    const timestamps = userRateLimits.get(userJid);
+    // Filter out old timestamps
+    const recent = timestamps.filter(t => now - t < RATE_LIMIT_WINDOW);
+    recent.push(now);
+    userRateLimits.set(userJid, recent);
+    return recent.length <= RATE_LIMIT_MAX;
+}
+
+// Cleanup rate limit data every 5 minutes
+setInterval(() => {
+    const cutoff = Date.now() - RATE_LIMIT_WINDOW;
+    for (const [jid, times] of userRateLimits) {
+        const recent = times.filter(t => t > cutoff);
+        if (recent.length === 0) userRateLimits.delete(jid);
+        else userRateLimits.set(jid, recent);
+    }
+}, 5 * 60 * 1000);
+
 // Cooldown untuk smart nimbrung (biar gak kebanyakan chat)
 const nimbrungCooldowns = new Map();
 setInterval(() => {
@@ -296,7 +324,7 @@ export async function handleMessage(sock, msg) {
                     return;
                 }
             } catch (err) {
-                console.error('Audio processing error:', err);
+                error('Audio processing', err);
                 await sock.sendMessage(remoteJid, { text: '❌ Terjadi kesalahan saat memproses audio.' });
                 return;
             }
@@ -317,7 +345,7 @@ export async function handleMessage(sock, msg) {
                 await sock.sendMessage(remoteJid, { text: response });
                 return;
             } catch (err) {
-                console.error('Vision processing error:', err);
+                error('Vision processing', err);
                 await sock.sendMessage(remoteJid, { text: '❌ Terjadi kesalahan saat memproses gambar.' });
                 return;
             }
@@ -369,7 +397,7 @@ export async function handleMessage(sock, msg) {
                 }
                 return;
             } catch (err) {
-                console.error('Document processing error:', err);
+                error('Document processing', err);
                 await sock.sendMessage(remoteJid, { text: '❌ Gagal membaca dokumen.' });
                 return;
             }
@@ -436,6 +464,14 @@ export async function handleMessage(sock, msg) {
             }
         }
 
+        // ==================== RATE LIMIT CHECK ====================
+        if (!isOwner && (isPrivateChat || (isGroup && isMentioned))) {
+            if (!checkRateLimit(senderJid)) {
+                await sock.sendMessage(remoteJid, { text: '⏳ Mohon tunggu sebentar. Ada terlalu banyak permintaan.' });
+                return;
+            }
+        }
+
         // ==================== AI CHAT ====================
         if (isPrivateChat || (isGroup && isMentioned)) {
             const aiSkill = findSkillByCommand('__ai__');
@@ -492,7 +528,7 @@ export async function handleMessage(sock, msg) {
                     }
                 }
             } catch (err) {
-                console.error('❌ Smart nimbrung error:', err.message);
+                error('Smart nimbrung', err);
             }
         }
 
@@ -535,7 +571,7 @@ async function isGroupAdmin(sock, groupJid, senderJid) {
         const member = meta.participants.find(p => p.id?.split('@')[0] === senderId);
         return member?.admin === 'admin' || member?.admin === 'superadmin';
     } catch (err) {
-        console.warn('Gagal cek admin grup:', err.message);
+        warn('Gagal cek admin grup: ' + err.message);
         return false;
     }
 }

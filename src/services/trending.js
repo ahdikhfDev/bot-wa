@@ -156,7 +156,7 @@ export async function getTrendingTopics(refresh = false) {
   try {
     const usedTopics = getStocks(20).map(s => s.topic.toLowerCase());
     topics = topics.filter(t => !usedTopics.some(u => t.topic.toLowerCase().includes(u) || u.includes(t.topic.toLowerCase())));
-  } catch {}
+  } catch (e) { log('TRENDING_WARN', e.message); }
 
   // If all sources empty, use fallback
   if (topics.length === 0) {
@@ -192,7 +192,7 @@ export async function pickBestTrending() {
       return { ...sorted[0], source: sorted[0].source || 'trending' };
     }
   } catch (err) {
-    console.warn('pickBestTrending fallback:', err.message);
+    warn('pickBestTrending fallback: ' + err.message);
   }
   return randomFromFallback();
 }

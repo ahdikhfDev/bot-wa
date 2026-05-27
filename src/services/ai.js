@@ -13,6 +13,7 @@ export { recordTokenUsage };
 import { buildContext, summarizeConversationAsync } from './contextBuilder.js';
 import { extractFactsAsync } from './userProfile.js';
 import { searchWeb } from './search.js';
+import { warn, error as logError } from '../utils/logger.js';
 
 // Use system ffmpeg on Linux (STB) for better compatibility, static on Windows
 const actualFfmpegPath = os.platform() === 'win32' ? ffmpegPath : 'ffmpeg';
@@ -86,7 +87,7 @@ async function refresh9RouterModels() {
             _9routerCacheTime = Date.now();
         }
     } catch (err) {
-        console.warn('⚠️ 9Router model refresh error:', err.message);
+        warn('9Router model refresh: ' + err.message);
     }
 }
 
@@ -250,12 +251,12 @@ export async function callAI(prompt, history = [], mode = 'asik', chatId = null,
                 return responseMessage.content || 'Gak ada jawaban.';
             } catch (err) {
                 if (err?.status === 401 || err?.status === 403) throw err;
-                console.warn(`⚠️ Model ${model} error/limit: ${err.message}`);
+                warn(`Model ${model} error/limit: ${err.message}`);
             }
         }
         return 'Semua model Groq lagi sibuk bos.';
     } catch (err) {
-        console.error('Groq callAI error:', err);
+        logError('Groq callAI', err);
         return `Error: ${err.message}`;
     }
 }
@@ -281,7 +282,7 @@ export async function callAIGemini(prompt, history = [], mode = 'asik', chatId =
         recordTokenUsage(prompt.length / 4, text.length / 4, 'gemini-1.5-flash');
         return text;
     } catch (err) {
-        console.error('Gemini Error:', err.message);
+        logError('Gemini Error', err);
         return null;
     }
 }
@@ -302,7 +303,7 @@ export async function callAIAnthropic(prompt, history = [], mode = 'asik', chatI
         recordTokenUsage(msg.usage.input_tokens, msg.usage.output_tokens, 'claude-3-haiku');
         return msg.content[0].text;
     } catch (err) {
-        console.error('Anthropic Error:', err.message);
+        logError('Anthropic Error', err);
         return null;
     }
 }
@@ -400,7 +401,7 @@ export async function callAIVision(prompt, base64Image, mode = 'asik', chatId = 
         
         return response;
     } catch (err) { 
-        console.error('Vision Error:', err.message);
+        logError('Vision Error', err);
         return 'Maaf, mata AI saya lagi kelilipan (error vision).'; 
     }
 }
@@ -421,7 +422,7 @@ export async function extractFromDocument(chatId, text, fileName) {
             addMemory(chatId, `Fakta dari ${fileName}: ${facts}`, 'document_fact', 5, 'document');
         }
     } catch (err) {
-        console.error('Extract document error:', err.message);
+        logError('Extract document', err);
     }
 }
 
@@ -438,7 +439,7 @@ export async function getVoiceBuffer(text, lang = 'id') {
         const arrayBuffer = await resp.arrayBuffer();
         return Buffer.from(arrayBuffer);
     } catch (err) {
-        console.error('getVoiceBuffer error:', err.message);
+        logError('getVoiceBuffer', err);
         return null;
     }
 }
@@ -451,7 +452,7 @@ export async function summarizeText(text, mode = 'asik', chatId = null) {
         const prompt = `Rangkum teks berikut secara informatif:\n\n"""\n${text}\n"""\n\nBuat ringkasan padat 3-5 kalimat.`;
         return await callAI(prompt, [], mode, chatId);
     } catch (err) {
-        console.error('Summarize error:', err.message);
+        logError('Summarize', err);
         return 'Gagal merangkum.';
     }
 }
@@ -502,7 +503,7 @@ Jika tidak ada fakta penting, output: []`
             const jsonMatch = raw.match(/\[[\s\S]*\]/);
             facts = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(raw);
         } catch {
-            console.warn('⚠️ Failed to parse memory extraction JSON, raw:', raw.substring(0, 200));
+            warn('Memory extraction JSON parse failed: ' + raw.substring(0, 200));
             return;
         }
 
@@ -521,7 +522,7 @@ Jika tidak ada fakta penting, output: []`
 
         console.log(`🧠 Learning: stored ${storedCount} new memories for ${chatId}`);
     } catch (error) {
-        console.error('❌ Memory extraction error:', error.message);
+        logError('Memory extraction', error);
     }
 }
 

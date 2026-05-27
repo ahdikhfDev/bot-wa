@@ -13,3 +13,6 @@ logs/
 *.before-*
 temp_*
 stock-videos/
+data/
+Dockerfile
+backups/

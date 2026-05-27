@@ -236,7 +236,7 @@ Contoh:
                     log('SORRY', `AI apologized in ${remoteJid} for: ${reason}`);
                 } catch (err) {
                     await sock.sendMessage(remoteJid, { text: `🙏 Maaf banget ya semuanya kalo ada spam atau notifikasi yang ganggu. Makasih pengertiannya! 🫶` });
-                    console.error('❌ AI apology error:', err.message);
+                    logError("AI apology", err);
                 }
                 return;
             }

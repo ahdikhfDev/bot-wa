@@ -2,13 +2,52 @@ import initSqlJs from 'sql.js';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { log, warn, error as logError } from '../utils/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = process.env.DB_PATH || path.join(__dirname, '../database.sqlite');
+const dbPath = process.env.DB_PATH || path.join(__dirname, '../../data/database.sqlite');
 
 let db;
 let SQL;
 let saveTimer = null;
+
+// --- Auto Backup Database ---
+const BACKUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let backupTimer = null;
+
+function scheduleBackup() {
+    if (backupTimer) clearInterval(backupTimer);
+    backupTimer = setInterval(async () => {
+        try {
+            const backupDir = path.join(__dirname, '../../backups');
+            if (!fs.existsSync(backupDir)) {
+                fs.mkdirSync(backupDir, { recursive: true });
+            }
+            const date = new Date().toISOString().slice(0, 10);
+            const backupFile = path.join(backupDir, 'database-' + date + '.sqlite');
+            if (fs.existsSync(dbPath) && !fs.existsSync(backupFile)) {
+                await fs.promises.copyFile(dbPath, backupFile);
+                log('DB_BACKUP', 'Backup: ' + backupFile);
+            }
+            try {
+                const files = fs.readdirSync(backupDir);
+                const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+                for (const f of files) {
+                    const fp = path.join(backupDir, f);
+                    const stat = fs.statSync(fp);
+                    if (stat.mtimeMs < twoWeeksAgo) {
+                        fs.unlinkSync(fp);
+                        log('DB_BACKUP_CLEAN', 'Hapus: ' + f);
+                    }
+                }
+            } catch (cleanErr) {
+                logError('Backup cleanup', cleanErr);
+            }
+        } catch (backupErr) {
+            logError('Backup', backupErr);
+        }
+    }, BACKUP_INTERVAL_MS);
+}
 
 async function initDb() {
     if (!SQL) {
@@ -17,8 +56,15 @@ async function initDb() {
 
     // Load existing database or create new
     if (fs.existsSync(dbPath)) {
-        const fileBuffer = fs.readFileSync(dbPath);
+        let fileBuffer = fs.readFileSync(dbPath);
         db = new SQL.Database(fileBuffer);
+        // Retry if DB was partially written (race on pm2 restart)
+        const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+        if (tables.length === 0 && fileBuffer.length > 0) {
+            await new Promise(r => setTimeout(r, 1000));
+            fileBuffer = fs.readFileSync(dbPath);
+            db = new SQL.Database(fileBuffer);
+        }
     } else {
         db = new SQL.Database();
     }
@@ -62,7 +108,7 @@ async function initDb() {
         )
     `);
     // Add name column if missing (migrate old DB)
-    try { db.run('ALTER TABLE whitelist ADD COLUMN name TEXT DEFAULT ""'); } catch {}
+    try { db.run('ALTER TABLE whitelist ADD COLUMN name TEXT DEFAULT ""'); } catch (e) { warn('DB migrate', e.message); }
 
     // Tabel untuk Auto Reminder / Alarm
     db.run(`
@@ -75,7 +121,7 @@ async function initDb() {
             retry_count INTEGER DEFAULT 0
         )
     `);
-    try { db.run('ALTER TABLE reminders ADD COLUMN retry_count INTEGER DEFAULT 0'); } catch {}
+    try { db.run('ALTER TABLE reminders ADD COLUMN retry_count INTEGER DEFAULT 0'); } catch (e) { warn('DB migrate', e.message); }
 
     // Tabel untuk Long-Term Memory / Learning
     db.run(`
@@ -94,8 +140,8 @@ async function initDb() {
     `);
 
     // Add keywords/source columns if missing (migrate old DB)
-    try { db.run('ALTER TABLE memories ADD COLUMN keywords TEXT DEFAULT ""'); } catch {}
-    try { db.run('ALTER TABLE memories ADD COLUMN source TEXT DEFAULT "chat"'); } catch {}
+    try { db.run('ALTER TABLE memories ADD COLUMN keywords TEXT DEFAULT ""'); } catch (e) { warn('DB migrate', e.message); }
+    try { db.run('ALTER TABLE memories ADD COLUMN source TEXT DEFAULT "chat"'); } catch (e) { warn('DB migrate', e.message); }
 
     // Tabel untuk tracking interaction count per grup (learning trigger)
     db.run(`
@@ -134,13 +180,15 @@ async function initDb() {
 
 let isSaving = false;
 let saveRequested = false;
+let savePromise = null;
 
 async function saveDb() {
     if (!db) return;
-    if (isSaving) {
+    if (isSaving && savePromise) {
         saveRequested = true;
-        return;
+        return savePromise;
     }
+    if (isSaving) return;
     isSaving = true;
 
     if (saveTimer) {
@@ -148,19 +196,24 @@ async function saveDb() {
         saveTimer = null;
     }
 
-    try {
-        const data = db.export();
-        const buffer = Buffer.from(data);
-        await fs.promises.writeFile(dbPath, buffer);
-    } catch (err) {
-        console.error('❌ Failed to save database:', err.message);
-    } finally {
-        isSaving = false;
-        if (saveRequested) {
-            saveRequested = false;
-            saveDb();
+    savePromise = (async () => {
+        try {
+            const data = db.export();
+            const buffer = Buffer.from(data);
+            await fs.promises.writeFile(dbPath, buffer);
+        } catch (err) {
+            logError('Save DB', err);
+        } finally {
+            isSaving = false;
+            if (saveRequested) {
+                saveRequested = false;
+                saveDb();
+            }
         }
-    }
+    })();
+
+    await savePromise;
+    return;
 }
 
 function saveDbDebounced(delayMs = 1500) {
@@ -173,6 +226,7 @@ function saveDbDebounced(delayMs = 1500) {
 
 export async function flushDb() {
     if (!db) return;
+    if (savePromise) await savePromise.catch(() => {});
     await saveDb();
 }
 
@@ -210,6 +264,7 @@ function autoWhitelistOwners() {
 }
 
 export function initDatabase() {
+    scheduleBackup();
     return initDb();
 }
 
@@ -701,11 +756,11 @@ export function loadPendingBroadcasts() {
                 const targets = new Map();
                 jids.forEach((j, i) => targets.set(j, names[i] || 'Unknown'));
                 pendingBroadcasts.set(row[1], { targets, message: row[4], id: row[0] });
-            } catch {}
+            } catch (e) { logError("Broadcast parse", e); }
         }
         console.log(`📡 Loaded ${rows.length} pending broadcasts from DB`);
     } catch (err) {
-        console.warn('⚠️ Gagal load pending broadcasts:', err.message);
+        logError('Load pending broadcasts', err);
     }
 }
 
@@ -1076,7 +1131,7 @@ export function initStockTable() {
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     `);
-    try { db.run("ALTER TABLE stock ADD COLUMN trend_source TEXT DEFAULT ''"); } catch {}
+    try { db.run("ALTER TABLE stock ADD COLUMN trend_source TEXT DEFAULT ''"); } catch (e) { warn('DB migrate', e.message); }
     saveDb();
 }
 
@@ -1159,10 +1214,10 @@ export function deleteStock(id) {
     const stock = getStockById(id);
     if (stock) {
         if (stock.video_path && fs.existsSync(stock.video_path)) {
-            try { fs.unlinkSync(stock.video_path); } catch {}
+            try { fs.unlinkSync(stock.video_path); } catch (e) { logError("DB stock cleanup video", e); }
         }
         if (stock.thumbnail_path && fs.existsSync(stock.thumbnail_path)) {
-            try { fs.unlinkSync(stock.thumbnail_path); } catch {}
+            try { fs.unlinkSync(stock.thumbnail_path); } catch (e) { logError("DB stock cleanup thumbnail", e); }
         }
     }
     db.run('DELETE FROM stock WHERE id = ?', [id]);

@@ -1,4 +1,5 @@
 import { getLinkPreview } from 'link-preview-js';
+import { error as logError } from '../utils/logger.js';
 
 function formatPreview(data, url) {
     try {
@@ -94,7 +95,7 @@ Lihat info singkat dari sebuah URL.
             // Fallback: text only
             await sock.sendMessage(remoteJid, { text });
         } catch (err) {
-            console.error('Preview Error:', err.message);
+            logError('Preview', err);
             await sock.sendMessage(remoteJid, {
                 text: `❌ Gagal mendapatkan preview.\nError: ${err.message}`
             });

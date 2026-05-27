@@ -1,6 +1,7 @@
 import { callAI, chatWithContext, getVoiceBuffer, extractAndStoreMemories } from '../services/ai.js';
 import { getMode, getGroupHistory, addContextMessage, incrementInteractionCount, getInteractionCount, resetInteractionCount } from '../services/db.js';
 import { getLearningInterval } from '../services/ai.js';
+import { warn } from '../utils/logger.js';
 
 export default {
     name: 'ai',
@@ -42,7 +43,7 @@ export default {
         try {
             await sock.sendMessage(remoteJid, { text: response }, { quoted: msg });
         } catch (sendErr) {
-            console.warn('⚠️ Gagal mengirim dengan quote', sendErr.message);
+            warn('Gagal mengirim dengan quote: ' + sendErr.message);
             await sock.sendMessage(remoteJid, { text: response });
         }
 
