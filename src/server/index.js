@@ -135,11 +135,10 @@ export function startServer() {
     botStatus.messageCount = parseInt(getSetting('stats_total_messages', '0'));
     botStatus.totalCumulative = parseInt(getSetting('stats_total_cumulative', '0'));
     botStatus.accumulatedUptime = parseInt(getSetting('stats_accumulated_uptime', '0'));
-    // Save accumulated uptime every 60s
+    // Save total uptime every 60s
     if (uptimeSaveTimer) clearInterval(uptimeSaveTimer);
     uptimeSaveTimer = setInterval(() => {
-        botStatus.accumulatedUptime = getTotalUptime();
-        setSetting('stats_accumulated_uptime', String(botStatus.accumulatedUptime));
+        setSetting('stats_accumulated_uptime', String(getTotalUptime()));
     }, 60000);
 
     // Seed env vars to DB so web dashboard can see/manage them
@@ -605,7 +604,7 @@ app.post('/api/provider', (req, res) => {
         if (!stock || !stock.video_path) return res.status(404).json({ error: 'Video not found' });
         if (!fs.existsSync(stock.video_path)) return res.status(404).json({ error: 'File not found' });
         res.setHeader('Content-Type', 'video/mp4');
-        res.setHeader('Content-Disposition', `attachment; filename="stock-${stock.id}.mp4"`);
+        res.setHeader('Content-Disposition', `inline; filename="stock-${stock.id}.mp4"`);
         fs.createReadStream(stock.video_path).pipe(res);
     });
 
@@ -802,6 +801,108 @@ app.get('/v1/models', async (req, res) => {
     } catch (err) {
         res.json({ object: 'list', data: [] });
     }
+});
+
+
+// ==================== API: CONTENT GENERATOR ====================
+let generationProgress = {};
+let generationSseClients = {};
+
+function broadcastContentProgress(jobId, data) {
+    if (!generationSseClients[jobId]) return;
+    const msg = `data: ${JSON.stringify(data)}`;
+    for (const client of generationSseClients[jobId]) {
+        try { client.write(msg); } catch { generationSseClients[jobId].delete(client); }
+    }
+}
+
+app.post('/api/content/generate', async (req, res) => {
+    const { topic, style, count } = req.body || {};
+    if (!topic || !topic.trim()) {
+        return res.status(400).json({ error: 'Topic required' });
+    }
+    const jobId = 'gen-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const safeStyle = ['edukasi', 'fakta', 'story', 'quotes', 'kfakta', 'kedukasi', 'kstory', 'kquotes'].includes(style) ? style : 'kfakta';
+    
+    generationProgress[jobId] = { status: 'queued', progress: [], outputPath: null, error: null, topic };
+    generationSseClients[jobId] = new Set();
+    
+    res.json({ success: true, jobId });
+    
+    // Process async
+    try {
+        const { generateKonten } = await import('../services/videoGenerator.js');
+        
+        const result = await generateKonten(topic, (msg) => {
+            generationProgress[jobId].progress.push(msg);
+            generationProgress[jobId].status = 'processing';
+            broadcastContentProgress(jobId, { type: 'progress', message: msg, progress: generationProgress[jobId].progress });
+        }, safeStyle);
+        
+        generationProgress[jobId].status = 'done';
+        generationProgress[jobId].outputPath = result.outputPath;
+        generationProgress[jobId].title = result.title;
+        broadcastContentProgress(jobId, { type: 'done', outputPath: result.outputPath, title: result.title });
+    } catch (err) {
+        generationProgress[jobId].status = 'error';
+        generationProgress[jobId].error = err.message;
+        broadcastContentProgress(jobId, { type: 'error', error: err.message });
+        console.error('Content generate error:', err.message);
+    }
+    
+    // Cleanup SSE after 30s
+    setTimeout(() => {
+        delete generationProgress[jobId];
+        delete generationSseClients[jobId];
+    }, 30000);
+});
+
+app.get('/api/content/progress/:jobId', (req, res) => {
+    const { jobId } = req.params;
+    const job = generationProgress[jobId];
+    if (!job) {
+        return res.json({ status: 'not_found' });
+    }
+    res.json(job);
+});
+
+app.get('/api/content/sse/:jobId', (req, res) => {
+    const { jobId } = req.params;
+    if (!generationSseClients[jobId]) {
+        return res.status(404).json({ error: 'Job not found' });
+    }
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+    });
+    const job = generationProgress[jobId];
+    if (job) {
+        res.write(`data: ${JSON.stringify({ type: 'status', status: job.status, progress: job.progress })}`);
+    }
+    generationSseClients[jobId].add(res);
+    req.on('close', () => generationSseClients[jobId].delete(res));
+});
+
+
+// Serve generated video files by absolute path
+app.get('/api/content/video', (req, res) => {
+    const filePath = req.query.path;
+    if (!filePath) return res.status(400).json({ error: 'Path required' });
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found: ' + filePath });
+    
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeTypes = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.avi': 'video/x-msvideo' };
+    const contentType = mimeTypes[ext] || 'application/octet-stream';
+    
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', 'inline; filename="content-' + path.basename(filePath) + '"');
+    res.setHeader('Accept-Ranges', 'bytes');
+    
+    const stat = fs.statSync(filePath);
+    res.setHeader('Content-Length', stat.size);
+    
+    fs.createReadStream(filePath).pipe(res);
 });
 
 app.listen(PORT, '0.0.0.0', () => {

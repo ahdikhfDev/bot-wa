@@ -28,45 +28,72 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 5. Project WhatsApp Bot (wa-bot)
 
 ### Tech Stack
-- **Runtime:** Node.js
+- **Runtime:** Node.js (ESM — `"type": "module"`)
 - **WhatsApp Library:** Baileys
-- **Database:** SQLite (via better-sqlite3)
-- **AI API:** OpenCode.ai (Anthropic-compatible API)
+- **Database:** SQLite (via sql.js — WASM-based, in-memory + file persist)
+- **AI Provider:** Groq (primary), Gemini, Anthropic, 9Router (fallback combo)
+- **AI Model:** `llama-3.1-8b-instant` (Groq), `llama-3.2-90b-vision-preview` (vision)
 
 ### Struktur Project
 ```
 wa-bot/
+├── index.js                  # Entry point, koneksi WA
 ├── src/
-│   ├── index.js           # Entry point, koneksi WA
-│   ├── handlers/          # Message handlers
-│   │   ├── ai.js         # AI response logic
-│   │   ├── jadwal.js     # Jadwal management
-│   │   └── rangkum.js    # Summarize text
+│   ├── handlers/
+│   │   ├── message.js        # Main message handler (routing, anti-spam, media detection)
+│   │   ├── group.js          # Grup logic (welcome, leave, settings)
+│   │   └── handlerResolver.js# Resolve handler berdasarkan tipe pesan
 │   ├── services/
-│   │   ├── ai.js         # OpenCode.ai API service
-│   │   └── db.js         # SQLite service
-│   ├── utils/
-│   │   └── helpers.js    # Utility functions
-│   └── config.js         # Konfigurasi global
-├── .env                  # API keys & config
-├── database.sqlite       # Database file
+│   │   ├── ai.js             # AI service (Groq, Gemini, Anthropic, 9Router)
+│   │   ├── db.js             # SQLite service (sql.js, in-memory + file persist)
+│   │   ├── contextBuilder.js # Build context: profil + ringkasan + RAG + history
+│   │   ├── videoGenerator.js # Video generation (Pollinations AI)
+│   │   ├── browserAgent.js   # Browser automation (Playwright)
+│   │   └── browser.js        # Browser screenshot utility
+│   ├── skills/               # Modular command system (auto-loaded)
+│   │   ├── _loader.js        # Skill loader & router
+│   │   ├── ai.js             # AI chat skill
+│   │   ├── help.js           # /help command
+│   │   ├── reminder.js       # /reminder command
+│   │   ├── video.js          # /buatvideo command
+│   │   ├── reset.js          # /reset (disabled)
+│   │   ├── browser.js        # /browser agent command
+│   │   ├── search.js         # /search, /cari
+│   │   ├── tiktok.js         # TikTok downloader
+│   │   ├── translate.js      # Translator
+│   │   ├── weather.js        # Cuaca
+│   │   ├── ...               # other skills
+│   │   └── index.js          # Re-export all
+│   ├── server/               # Web dashboard (Express)
+│   │   └── index.js
+│   └── utils/
+│       ├── helpers.js
+│       └── logger.js
+├── database.sqlite           # Database file
+├── .env                      # API keys & config
 ├── package.json
-└── README.md
+└── CLAUDE.md
 ```
 
 ### Fitur Utama
-- **AI Chat** — Ngerti konteks percakapan grup (maintain history)
-- **/rangkum [teks]** — Rangkum teks panjang
-- **/jadwal add/del/list** — Manage jadwal grup
-- **Mention bot** untuk activate AI
+- **AI Chat** — Multi-provider AI dengan konteks percakapan (profil + ringkasan + RAG memories)
+- **Reminder** — `/reminder buat/list/hapus` dengan alarm 3× + interval 5 menit
+- **Roasting Video** — `/buatvideo /roast ...` bikin video roasting otomatis
+- **Browser Agent** — `/browser` untuk automasi web pakai Playwright
+- **Web Dashboard** — Port 6789, kelola API keys & settings
+- **Multi-Mode AI** — asik, galak, formal, dll (custom modes from DB)
+- **Memori Jangka Panjang** — Ekstraksi fakta otomatis + RAG search
 
 ### Command Penting
 ```bash
-npm install          # Install dependencies
-npm start           # Jalankan bot
-npm run link         # Scan QR code untuk link WA
-npm run status      # Check status bot
+pm2 restart 0           # Restart bot
+pm2 log 0               # Lihat log
+pm2 status              # Check status
+npm install             # Install dependencies
 ```
 
-### API Config
-OpenCode.ai endpoint (`ANTHROPIC_BASE_URL`) sudah disetup untuk menggunakan model `minimax-m2.5-free`.
+### Catatan Penting
+- Bot jalan via PM2 sebagai user `thirty`
+- Timezone: WIB (UTC+7)
+- Database: sql.js (WASM) — in-memory, persist ke file via `saveDb()` / `flushDb()`
+- API key disimpan di DB table `bot_settings`, bisa di-set via Dashboard web

@@ -128,7 +128,7 @@ body {
 .badge-yellow .badge-dot { background: var(--yellow); }
 
 /* ============ STATS GRID ============ */
-.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 24px; }
 .stat-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
   padding: 18px 20px; transition: border-color var(--transition);
@@ -361,6 +361,7 @@ label { font-size: 12px; color: var(--text-2); font-weight: 500; display: block;
       <button class="nav-item" data-tab="context"><i data-lucide="message-square-text" width="18" height="18"></i>Chat History</button>
       <button class="nav-item" data-tab="profiles"><i data-lucide="file-text" width="18" height="18"></i>Profiles</button>
       <button class="nav-item" data-tab="stock"><i data-lucide="video" width="18" height="18"></i>Stock</button>
+      <button class="nav-item" data-tab="content"><i data-lucide="sparkles" width="18" height="18"></i>Content</button>
       <button class="nav-item" data-tab="settings"><i data-lucide="settings" width="18" height="18"></i>Settings</button>
     </nav>
     <div class="sidebar-footer">
@@ -565,6 +566,7 @@ async function renderTab(tab) {
       case 'context': await renderContext(); break;
       case 'profiles': await renderProfiles(); break;
       case 'stock': await renderStock(); break;
+      case 'content': await renderContent(); break;
       case 'settings': await renderSettings(); break;
     }
   } catch (e) {
@@ -576,14 +578,15 @@ async function renderTab(tab) {
 async function renderStock() {
   const el = document.getElementById('tabContent');
   const data = await api('/api/stock?limit=12');
-  const stocks = data?.stocks || [];
+ 
+    const stocks = data?.stocks || [];
 
   let html = `
     <div class="section-header">
       <div class="section-title"><i data-lucide="video" width="20" height="20"></i>Stock Content</div>
       <div class="text-xs text-subtle">${data?.total || 0} total video</div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(200px, 1fr));gap:16px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:16px">
   `;
 
   if (stocks.length === 0) {
@@ -593,15 +596,17 @@ async function renderStock() {
       html += `
         <div class="card" style="padding:10px">
           <div style="aspect-ratio:9/16;background:#000;border-radius:6px;overflow:hidden;margin-bottom:8px;position:relative">
-            <img src="/api/stock/${s.id}/thumbnail" style="width:100%;height:100%;object-fit:cover" onerror="this.src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='">
+            <video src="/api/stock/${s.id}/video" style="width:100%;height:100%;object-fit:cover" controls preload="metadata" poster="/api/stock/${s.id}/thumbnail"></video>
             <div style="position:absolute;bottom:5px;right:5px;background:rgba(0,0,0,0.6);padding:2px 6px;border-radius:4px;font-size:10px">
               ${(s.video_size / 1024 / 1024).toFixed(1)}MB
             </div>
           </div>
           <div class="text-xs truncate" title="${s.topic}"><strong>${s.topic}</strong></div>
-          <div class="text-xs text-subtle mb-2">${new Date(s.created_at).toLocaleDateString()}</div>
-          <div class="flex gap-1">
-            <a href="/api/stock/${s.id}/video" target="_blank" class="btn btn-xs btn-ghost" style="flex:1">View</a>
+          ${s.caption ? `<div class="text-xs text-subtle truncate" style="margin-top:2px" title="${String(s.caption).replace(/"/g,'&quot;')}">${String(s.caption).substring(0,60)}</div>` : ''}
+          ${s.tags && s.tags.length ? `<div class="flex gap-1" style="flex-wrap:wrap;margin-top:4px;margin-bottom:4px">${s.tags.map(t => `<span style="background:var(--surface-2);padding:1px 5px;border-radius:3px;font-size:10px;color:var(--text-3);cursor:pointer" onclick="navigator.clipboard.writeText('${t}')">${t}</span>`).join('')}</div>` : ''}
+          <div class="text-xs text-subtle" style="margin-top:4px">${new Date(s.created_at).toLocaleDateString()}</div>
+          <div class="flex gap-1" style="margin-top:6px">
+            <a href="/api/stock/${s.id}/video" download class="btn btn-xs btn-ghost" style="flex:1">Download</a>
             <button class="btn btn-xs btn-danger" onclick="deleteStock(${s.id})"><i data-lucide="trash-2" width="12" height="12"></i></button>
           </div>
         </div>
@@ -623,6 +628,361 @@ async function deleteStock(id) {
 }
 
 // ==================== OVERVIEW TAB ====================
+
+
+// ==================== CONTENT TAB ====================
+async function renderContent() {
+  const el = document.getElementById('tabContent');
+  let html = `<div class="section-header">
+    <div class="section-title"><i data-lucide="sparkles" width="20" height="20"></i>AI Content Creator</div>
+    <button class="btn btn-sm btn-ghost" onclick="clearContentOutput()"><i data-lucide="trash-2" width="14" height="14"></i> Clear Output</button>
+  </div>
+  <p class="text-sm text-subtle mb-4">Generate video otomatis untuk TikTok/Reels/Shorts — 100% gratis (Groq + Edge-TTS + Pexels)</p>
+
+  <div class="card mb-4">
+    <div class="form-row mb-3">
+      <div style="flex:2">
+        <label>Topik Konten</label>
+        <input type="text" id="ct-topic" placeholder="Contoh: tips hemat uang, rahasia sukses, fakta unik..." value="">
+      </div>
+      <div style="flex:1">
+        <label>Style Video</label>
+        <select id="ct-style">
+          <option value="kfakta">🔥 Fakta (Singkat)</option>
+          <option value="kedukasi">📚 Edukasi (Singkat)</option>
+          <option value="kstory">📖 Story (Singkat)</option>
+          <option value="kquotes">💬 Quotes (Singkat)</option>
+          <option value="fakta">📊 Fakta (Panjang)</option>
+          <option value="edukasi">📝 Edukasi (Panjang)</option>
+          <option value="story">📕 Story (Panjang)</option>
+          <option value="quotes">✨ Quotes (Panjang)</option>
+        </select>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <button class="btn btn-primary" id="ct-generate-btn" onclick="startContentGenerate()">
+        <i data-lucide="play" width="16" height="16"></i> Generate Video
+      </button>
+      <span class="text-xs text-subtle" id="ct-status">Siap generate</span>
+    </div>
+  </div>
+
+  <!-- Progress / Live Log -->
+  <div id="ct-progress" style="display:none">
+    <div class="card mb-3">
+      <div class="flex items-center justify-between mb-2">
+        <div class="section-title" style="font-size:14px">
+          <i data-lucide="loader" width="16" height="16" class="spin"></i>
+          <span id="ct-progress-title">Memproses...</span>
+        </div>
+        <span class="badge badge-yellow" id="ct-progress-badge"><span class="badge-dot"></span> Processing</span>
+      </div>
+      <div class="progress-bar">
+        <div class="fill fill-blue" id="ct-progress-bar" style="width:0%"></div>
+      </div>
+      <div id="ct-log" style="margin-top:12px;max-height:300px;overflow-y:auto;background:var(--bg);border-radius:var(--radius-sm);padding:12px;font-family:var(--mono);font-size:11px;line-height:1.6"></div>
+    </div>
+  </div>
+
+  <!-- Result -->
+  <div id="ct-result" style="display:none">
+    <div class="card">
+      <div class="flex items-center justify-between mb-3">
+        <div class="section-title" style="font-size:14px">
+          <i data-lucide="check-circle" width="16" height="16" class="text-green"></i>
+          <span id="ct-result-title">Video Selesai!</span>
+        </div>
+        <div class="flex gap-2">
+          <button class="btn btn-sm btn-primary" id="ct-download-btn" onclick="downloadContentVideo()">
+            <i data-lucide="download" width="14" height="14"></i> Download
+          </button>
+          <button class="btn btn-sm btn-ghost" onclick="renderContent()">
+            <i data-lucide="plus" width="14" height="14"></i> Buat Lagi
+          </button>
+        </div>
+      </div>
+      <video id="ct-video-preview" controls style="width:100%;max-height:400px;border-radius:var(--radius-sm);background:#000" poster=""></video>
+    </div>
+  </div>
+
+  <!-- History -->
+  <div id="ct-history" class="mt-4">
+    <div class="section-header">
+      <div class="section-title" style="font-size:14px"><i data-lucide="clock" width="16" height="16"></i>Riwayat Generate</div>
+    </div>
+    <div id="ct-history-list">
+      <div class="text-sm text-subtle text-center" style="padding:24px">Belum ada riwayat</div>
+    </div>
+  </div>`;
+
+  el.innerHTML = html;
+  setTimeout(() => lucide.createIcons(), 50);
+  
+  // Load history
+  loadContentHistory();
+}
+
+// ==================== CONTENT GENERATE LOGIC ====================
+let _currentJobId = null;
+let _currentOutputPath = null;
+let _contentSseSource = null;
+
+async function startContentGenerate() {
+  const topic = document.getElementById('ct-topic').value.trim();
+  if (!topic) { toast('Masukkan topik konten!', 'warning'); return; }
+  
+  const style = document.getElementById('ct-style').value;
+  const btn = document.getElementById('ct-generate-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i data-lucide="loader" width="16" height="16" class="spin"></i> Generating...';
+  
+  // Show progress area
+  document.getElementById('ct-progress').style.display = 'block';
+  document.getElementById('ct-result').style.display = 'none';
+  document.getElementById('ct-log').innerHTML = '';
+  document.getElementById('ct-progress-bar').style.width = '0%';
+  document.getElementById('ct-progress-title').textContent = 'Memulai generate: ' + topic;
+  document.getElementById('ct-status').textContent = 'Generating...';
+  
+  try {
+    const res = await api('/api/content/generate', {
+      method: 'POST',
+      body: JSON.stringify({ topic, style })
+    });
+    
+    if (!res?.success) {
+      toast('Gagal memulai generate: ' + (res?.error || 'unknown'), 'error');
+      btn.disabled = false;
+      btn.innerHTML = '<i data-lucide="play" width="16" height="16"></i> Generate Video';
+      return;
+    }
+    
+    _currentJobId = res.jobId;
+    
+    // Connect SSE for real-time progress
+    connectContentSSE(res.jobId);
+    
+  } catch (err) {
+    toast('Error: ' + err.message, 'error');
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="play" width="16" height="16"></i> Generate Video';
+  }
+}
+
+function connectContentSSE(jobId) {
+  if (_contentSseSource) {
+    _contentSseSource.close();
+  }
+  
+  _contentSseSource = new EventSource(API + '/api/content/sse/' + jobId + '?token=' + encodeURIComponent(authToken));
+  
+  _contentSseSource.onmessage = function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      handleContentEvent(data);
+    } catch {}
+  };
+  
+  _contentSseSource.onerror = function() {
+    // Fallback: poll progress endpoint
+    setTimeout(() => pollContentProgress(jobId), 2000);
+  };
+}
+
+function handleContentEvent(data) {
+  const log = document.getElementById('ct-log');
+  const bar = document.getElementById('ct-progress-bar');
+  const badge = document.getElementById('ct-progress-badge');
+  const title = document.getElementById('ct-progress-title');
+  const btn = document.getElementById('ct-generate-btn');
+  
+  if (data.type === 'progress') {
+    const msg = data.message || '';
+    const time = new Date().toLocaleTimeString('id-ID');
+    log.innerHTML += '<div style="color:var(--text-2)">[' + time + '] ' + escapeHtml(msg) + '</div>';
+    log.scrollTop = log.scrollHeight;
+    
+    // Estimate progress from log entries count
+    const entries = log.querySelectorAll('div').length;
+    const pct = Math.min(entries * 8, 85);
+    bar.style.width = pct + '%';
+    
+    title.textContent = msg.length > 60 ? msg.substring(0, 60) + '...' : msg;
+  }
+  
+  if (data.type === 'done') {
+    bar.style.width = '100%';
+    badge.className = 'badge badge-green';
+    badge.innerHTML = '<span class="badge-dot"></span> Selesai';
+    document.getElementById('ct-status').textContent = '✅ Selesai!';
+    
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="play" width="16" height="16"></i> Generate Video';
+    
+    _currentOutputPath = data.outputPath || '';
+    
+    // Show result
+    setTimeout(() => {
+      showContentResult(data);
+    }, 500);
+    
+    toast('Video selesai! 🎉', 'success', 6000);
+    loadContentHistory();
+    
+    // Close SSE
+    if (_contentSseSource) {
+      _contentSseSource.close();
+      _contentSseSource = null;
+    }
+  }
+  
+  if (data.type === 'error') {
+    bar.style.width = '100%';
+    bar.className = 'fill fill-red';
+    bar.style.background = 'var(--red)';
+    badge.className = 'badge badge-red';
+    badge.innerHTML = '<span class="badge-dot"></span> Error';
+    document.getElementById('ct-status').textContent = '❌ Error: ' + (data.error || '');
+    
+    log.innerHTML += '<div style="color:var(--red);font-weight:600">❌ ' + escapeHtml(data.error || 'Unknown error') + '</div>';
+    
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="play" width="16" height="16"></i> Generate Video';
+    
+    toast('Error: ' + (data.error || 'Gagal generate'), 'error', 8000);
+    
+    if (_contentSseSource) {
+      _contentSseSource.close();
+      _contentSseSource = null;
+    }
+  }
+}
+
+async function pollContentProgress(jobId) {
+  let attempts = 0;
+  const maxAttempts = 15; // 2 minutes
+  
+  const poll = async () => {
+    try {
+      const data = await api('/api/content/progress/' + jobId);
+      if (!data || data.status === 'not_found') {
+        if (attempts < maxAttempts) {
+          attempts++;
+          setTimeout(poll, 2000);
+        }
+        return;
+      }
+      
+      if (data.progress) {
+        for (const msg of data.progress) {
+          const log = document.getElementById('ct-log');
+          if (log && !log.querySelector('[data-msg="' + escapeHtml(msg).replace(/"/g, '&quot;') + '"]')) {
+            const time = new Date().toLocaleTimeString('id-ID');
+            log.innerHTML += '<div style="color:var(--text-2)">[' + time + '] ' + escapeHtml(msg) + '</div>';
+            log.scrollTop = log.scrollHeight;
+          }
+        }
+      }
+      
+      if (data.status === 'done' || data.status === 'error') {
+        handleContentEvent(data.status === 'done'
+          ? { type: 'done', outputPath: data.outputPath, title: data.title }
+          : { type: 'error', error: data.error }
+        );
+        return;
+      }
+      
+      if (attempts < maxAttempts) {
+        attempts++;
+        setTimeout(poll, 2000);
+      }
+    } catch {
+      if (attempts < maxAttempts) {
+        attempts++;
+        setTimeout(poll, 3000);
+      }
+    }
+  };
+  
+  poll();
+}
+
+function showContentResult(data) {
+  document.getElementById('ct-progress').style.display = 'none';
+  document.getElementById('ct-result').style.display = 'block';
+  
+  const title = document.getElementById('ct-result-title');
+  title.textContent = '✅ ' + (data.title || 'Video Selesai!');
+  
+  // Set video preview
+  const video = document.getElementById('ct-video-preview');
+  if (data.outputPath) {
+    video.src = '/api/content/video?path=' + encodeURIComponent(data.outputPath);
+    video.load();
+  }
+}
+
+function downloadContentVideo() {
+  if (_currentOutputPath) {
+    window.open('/api/content/video?path=' + encodeURIComponent(_currentOutputPath), '_blank');
+  } else {
+    toast('Tidak ada video untuk di-download', 'warning');
+  }
+}
+
+function clearContentOutput() {
+  document.getElementById('ct-progress').style.display = 'none';
+  document.getElementById('ct-result').style.display = 'none';
+  document.getElementById('ct-log').innerHTML = '';
+  document.getElementById('ct-progress-bar').style.width = '0%';
+  document.getElementById('ct-status').textContent = 'Siap generate';
+  const btn = document.getElementById('ct-generate-btn');
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="play" width="16" height="16"></i> Generate Video';
+  }
+  _currentJobId = null;
+  _currentOutputPath = null;
+  if (_contentSseSource) {
+    _contentSseSource.close();
+    _contentSseSource = null;
+  }
+}
+
+async function loadContentHistory() {
+  try {
+    const data = await api('/api/stock?limit=5');
+    const stocks = data?.stocks || [];
+    const list = document.getElementById('ct-history-list');
+    if (!list) return;
+    
+    if (!stocks.length) {
+      list.innerHTML = '<div class="text-sm text-subtle text-center" style="padding:24px">Belum ada riwayat</div>';
+      return;
+    }
+    
+    let html = '<div class="table-wrap"><table><thead><tr><th>#</th><th>Judul</th><th>Topic</th><th>Status</th><th>Download</th></tr></thead><tbody>';
+    stocks.slice(0, 5).forEach((s, i) => {
+      html += `<tr>
+        <td class="text-xs text-subtle">${i + 1}</td>
+        <td>${escapeHtml(s.title || s.topic || '-').substring(0, 40)}</td>
+        <td><span class="tag">${escapeHtml(s.topic || '-')}</span></td>
+        <td><span class="badge ${s.status === 'done' ? 'badge-green' : s.status === 'error' ? 'badge-red' : 'badge-yellow'}" style="font-size:10px;padding:2px 8px"><span class="badge-dot"></span> ${s.status || 'done'}</span></td>
+        <td>${s.video_path ? '<button class="btn btn-xs btn-ghost" onclick="window.open(\'/api/content/video?path=\' + encodeURIComponent(s.video_path) + \'\',\'_blank\')"><i data-lucide="download" width="12" height="12"></i></button>' : '-'}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+    list.innerHTML = html;
+    setTimeout(() => lucide.createIcons(), 50);
+  } catch {}
+}
+
+// ==================== HELPER ====================
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 async function renderOverview() {
   const [status, tokens] = await Promise.all([api('/api/status'), api('/api/tokens')]);
   if (!status) return;

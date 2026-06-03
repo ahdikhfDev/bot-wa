@@ -310,7 +310,7 @@ export function formatMorningDigest(digest) {
         digest.github.slice(0, 3).forEach((r, i) => {
             text += `${i + 1}. *${r.name}*`;
             if (r.language !== 'Unknown') text += ` (${r.language})`;
-            text += ` ⭐${r.stars}\n   ${r.description.substring(0, 80)}\n`;
+            text += ` ⭐${r.stars}\n   ${r.description.substring(0, 80)}\n   🔗 ${r.url}\n`;
         });
         text += '\n';
     }
@@ -319,7 +319,7 @@ export function formatMorningDigest(digest) {
         text += `📰 *HackerNews Top*\n`;
         digest.hackernews.slice(0, 3).forEach((r, i) => {
             text += `${i + 1}. *${r.title.substring(0, 60)}*\n`;
-            text += `   ⬆️${r.score} 💬${r.comments}\n`;
+            text += `   ⬆️${r.score} 💬${r.comments}\n   🔗 ${r.url.substring(0, 80)}\n`;
         });
         text += '\n';
     }
@@ -328,7 +328,7 @@ export function formatMorningDigest(digest) {
         text += `📝 *Dev.to*\n`;
         digest.devto.slice(0, 2).forEach((r, i) => {
             text += `${i + 1}. *${r.title.substring(0, 60)}*\n`;
-            text += `   ❤️${r.positiveReactions} ⏱${r.readingTime}min\n`;
+            text += `   ❤️${r.positiveReactions} ⏱${r.readingTime}min\n   🔗 ${r.url}\n`;
         });
         text += '\n';
     }
@@ -337,6 +337,7 @@ export function formatMorningDigest(digest) {
         text += `📄 *ArXiv Papers*\n`;
         digest.arxiv.forEach((r, i) => {
             text += `${i + 1}. ${r.title.substring(0, 60)}...\n`;
+text += `   🔗 ${r.url}\n`;
         });
         text += '\n';
     }

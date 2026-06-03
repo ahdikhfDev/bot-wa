@@ -15,34 +15,40 @@ let saveTimer = null;
 const BACKUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 let backupTimer = null;
 
+async function cleanupOldBackups(backupDir) {
+    try {
+        const files = await fs.promises.readdir(backupDir);
+        const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+        await Promise.all(files.map(async (f) => {
+            const fp = path.join(backupDir, f);
+            try {
+                const stat = await fs.promises.stat(fp);
+                if (stat.mtimeMs < twoWeeksAgo) {
+                    await fs.promises.unlink(fp);
+                    log('DB_BACKUP_CLEAN', 'Hapus: ' + f);
+                }
+            } catch {}
+        }));
+    } catch (err) {
+        logError('Backup cleanup', err);
+    }
+}
+
 function scheduleBackup() {
     if (backupTimer) clearInterval(backupTimer);
     backupTimer = setInterval(async () => {
         try {
             const backupDir = path.join(__dirname, '../../backups');
-            if (!fs.existsSync(backupDir)) {
-                fs.mkdirSync(backupDir, { recursive: true });
-            }
+            await fs.promises.mkdir(backupDir, { recursive: true }).catch(() => {});
             const date = new Date().toISOString().slice(0, 10);
             const backupFile = path.join(backupDir, 'database-' + date + '.sqlite');
-            if (fs.existsSync(dbPath) && !fs.existsSync(backupFile)) {
+            const dbExists = await fs.promises.access(dbPath).then(() => true).catch(() => false);
+            const backupExists = await fs.promises.access(backupFile).then(() => true).catch(() => false);
+            if (dbExists && !backupExists) {
                 await fs.promises.copyFile(dbPath, backupFile);
                 log('DB_BACKUP', 'Backup: ' + backupFile);
             }
-            try {
-                const files = fs.readdirSync(backupDir);
-                const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
-                for (const f of files) {
-                    const fp = path.join(backupDir, f);
-                    const stat = fs.statSync(fp);
-                    if (stat.mtimeMs < twoWeeksAgo) {
-                        fs.unlinkSync(fp);
-                        log('DB_BACKUP_CLEAN', 'Hapus: ' + f);
-                    }
-                }
-            } catch (cleanErr) {
-                logError('Backup cleanup', cleanErr);
-            }
+            await cleanupOldBackups(backupDir);
         } catch (backupErr) {
             logError('Backup', backupErr);
         }
@@ -263,9 +269,56 @@ function autoWhitelistOwners() {
     }
 }
 
-export function initDatabase() {
+
+
+function importOrphanStocks() {
+    if (!db) return;
+    try {
+        var videoDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../stock-videos");
+        if (!fs.existsSync(videoDir)) return;
+
+        var files = fs.readdirSync(videoDir).filter(function(f) { return f.endsWith(".mp4") && !f.startsWith("."); });
+        if (files.length === 0) return;
+
+        var existingVideos = {};
+        var r = db.exec("SELECT video_path FROM stock");
+        if (r.length && r[0].values) {
+            for (var i = 0; i < r[0].values.length; i++) {
+                if (r[0].values[i][0]) existingVideos[path.basename(r[0].values[i][0])] = true;
+            }
+        }
+
+        var added = 0;
+        for (var i = 0; i < files.length; i++) {
+            var f = files[i];
+            if (existingVideos[f]) continue;
+            var base = path.basename(f, ".mp4");
+            var match = base.match(/^(.+?)_[a-z0-9]{7,}$/);
+            var topicName = match ? match[1].replace(/_/g, " ").trim() : base.replace(/_/g, " ");
+            var videoPath = path.join(videoDir, f);
+            var thumbPath = path.join(videoDir, base + ".jpg");
+            var size = fs.statSync(videoPath).size;
+            var tags = JSON.stringify(["#" + topicName.replace(/\s+/g, ""), "#video", "#thirtybot"]);
+            db.run(
+                "INSERT INTO stock (topic, caption, tags, video_path, thumbnail_path, video_size, trend_source) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [topicName, topicName, tags, videoPath, fs.existsSync(thumbPath) ? thumbPath : "", size, "auto_imported"]
+            );
+            added++;
+        }
+        if (added > 0) {
+            saveDb();
+            console.log("Imported " + added + " orphan videos to stock");
+        }
+    } catch (err) {
+        warn("Import orphan stocks: " + err.message);
+    }
+}
+
+
+export async function initDatabase() {
     scheduleBackup();
-    return initDb();
+    await initDb();
+    importOrphanStocks();
 }
 
 export function getDb() {
@@ -552,10 +605,12 @@ export function getMemories(groupId, limit = 10, category = null) {
         return obj;
     });
 
-    for (const m of memories) {
-        db.run('UPDATE memories SET access_count = access_count + 1, last_accessed = CURRENT_TIMESTAMP WHERE id = ?', [m.id]);
+    const ids = memories.map(m => m.id);
+    if (ids.length) {
+        const placeholders = ids.map(() => '?').join(',');
+        db.run('UPDATE memories SET access_count = access_count + 1, last_accessed = CURRENT_TIMESTAMP WHERE id IN (' + placeholders + ')', ids);
     }
-    saveDb();
+    saveDbDebounced();
 
     return memories;
 }
@@ -902,12 +957,21 @@ export function getSetting(key, defaultValue = '') {
 export function setSetting(key, value) {
     if (!db) return;
     db.run('INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?, ?)', [key, value]);
-    saveDb();
+    saveDbDebounced();
 }
 
 export function getAllSettings() {
     if (!db) return {};
     const result = db.exec('SELECT key, value FROM bot_settings');
+    if (!result.length) return {};
+    const settings = {};
+    result[0].values.forEach(row => { settings[row[0]] = row[1]; });
+    return settings;
+}
+
+export function getSettingsByPrefix(prefix) {
+    if (!db) return {};
+    const result = db.exec('SELECT key, value FROM bot_settings WHERE key LIKE ?', [prefix + '%']);
     if (!result.length) return {};
     const settings = {};
     result[0].values.forEach(row => { settings[row[0]] = row[1]; });

@@ -9,7 +9,7 @@
  * - Flood protection (rate limiting per user)
  */
 
-import { getSetting, setSetting, getDb, getAllSettings } from './db.js';
+import { getSettingsByPrefix, setSetting, getDb, getAllSettings } from './db.js';
 import { log, warn } from '../utils/logger.js';
 
 // ─── In-Memory Tracking ───
@@ -28,6 +28,11 @@ const WARN_THRESHOLD = 3;                 // 3 warnings → action
 const TRACKING_WINDOW_MS = 60000;         // bersihin data lama tiap 60 detik
 const MAX_CAPS_RATIO = 0.7;               // 70%+ huruf kapital = abuse
 const MAX_LINKS_PER_MESSAGE = 3;          // max 3 link per pesan
+
+// ─── Configuration Cache ───
+
+const configCache = new Map(); // chatId → { config, timestamp }
+const CONFIG_CACHE_TTL = 30000;           // 30 detik
 
 // ─── Toxic Keywords (multilingual Indonesia + English) ───
 
@@ -69,6 +74,13 @@ setInterval(() => {
         }
     }
 
+    // Cleanup expired config cache
+    for (const [chatId, cached] of configCache) {
+        if (Date.now() - cached.timestamp >= CONFIG_CACHE_TTL) {
+            configCache.delete(chatId);
+        }
+    }
+
     // Cleanup link tracking (expire after 1 hour)
     const oneHourAgo = now - 60 * 60 * 1000;
     for (const [gJid, linkMap] of recentGroupLinks) {
@@ -91,10 +103,21 @@ const CONFIG_KEYS = [
 ];
 
 export function getModerationConfig(chatId) {
+    // Check cache first
+    const cached = configCache.get(chatId);
+    if (cached && Date.now() - cached.timestamp < CONFIG_CACHE_TTL) {
+        return cached.config;
+    }
+
     const prefix = `mod_config_${chatId}_`;
-    const val = (key, def) => getSetting(prefix + key, def);
+    // Batch query: 1 SQL instead of 12
+    const settings = getSettingsByPrefix(prefix);
+    const val = (key, def) => {
+        const v = settings[prefix + key];
+        return v !== undefined ? v : def;
+    };
     const rawLinkSpam = val('linkspamprotection', 'draft');
-    return {
+    const config = {
         enabled: val('enabled', 'true') === 'true',
         level: parseInt(val('level', '2')),  // 1=light, 2=normal, 3=strict
         autoWarn: val('autowarn', 'true') === 'true',
@@ -108,6 +131,10 @@ export function getModerationConfig(chatId) {
         language: val('language', 'id'),
         announcementGroupJid: val('announcementgroupjid', ''),
     };
+
+    // Cache the result
+    configCache.set(chatId, { config, timestamp: Date.now() });
+    return config;
 }
 
 export function setModerationConfig(chatId, key, value) {
@@ -118,6 +145,7 @@ export function setModerationConfig(chatId, key, value) {
     }
     const settingKey = `mod_config_${chatId}_${normalizedKey}`;
     setSetting(settingKey, String(value));
+    configCache.delete(chatId); // invalidate cache
     log('MOD_CONFIG', `${chatId}: ${normalizedKey} = ${value}`);
 }
 
@@ -135,6 +163,7 @@ export function setDefaultModerationConfig(chatId) {
     setSetting(prefix + 'itcontentschedule', '08:00,12:00,18:00');
     setSetting(prefix + 'language', 'id');
     setSetting(prefix + 'announcementgroupjid', '');
+    configCache.delete(chatId); // invalidate cache
     log('MOD_CONFIG', `Default config set for ${chatId}`);
 }
 

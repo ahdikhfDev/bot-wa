@@ -1,5 +1,6 @@
 import { getSetting } from './db.js';
 import * as cheerio from 'cheerio';
+import { error as logError } from '../utils/logger.js';
 
 const UA = 'ThirtyBot/1.0 (WhatsApp AI Assistant)';
 const MAX_RESULTS = 5;

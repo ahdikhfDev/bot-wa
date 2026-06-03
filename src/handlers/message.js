@@ -86,12 +86,6 @@ export async function handleMessage(sock, msg) {
         const isGroup = remoteJid.endsWith('@g.us');
         let isOwner = isOwnerId(senderJid) || isOwnerId(senderNumber);
 
-        // Debug: log message type for ALL messages from Ahdi
-        if (msg.pushName === 'Ahdi Khalida Fathir') {
-            const msgKeys = Object.keys(msg.message || {});
-            console.log('[DEBUG_MSG] msgType=' + JSON.stringify(msgKeys) + ' content=' + JSON.stringify(messageContent?.substring(0, 30)));
-        }
-
         // ==================== ANTI-SPAM COOLDOWN ====================
         if (!isOwner) {
             const cooldownKey = isGroup ? senderJid : remoteJid;
@@ -368,9 +362,7 @@ export async function handleMessage(sock, msg) {
 
                 let docText = '';
                 if (isPDF) {
-                    const PDFParser = pdfParse.PDFParse || pdfParse;
-                    const parser = new PDFParser(buffer);
-                    const data = await parser.parse();
+                    const data = await pdfParse(buffer);
                     docText = (data?.text || '').substring(0, 3000);
                 } else if (fileName.toLowerCase().endsWith('.docx')) {
                     const result = await mammoth.extractRawText({ buffer });
@@ -449,20 +441,20 @@ export async function handleMessage(sock, msg) {
             }
         }
 
-        // ==================== SEARCH KEYWORD DETECTION ====================
-        if (!command && (isPrivateChat || (isGroup && isMentioned))) {
-            const nlMatch = findSkillByNaturalLanguage(text);
-            if (nlMatch && nlMatch.skill.name === 'search') {
-                const result = nlMatch.result;
-                await sock.sendPresenceUpdate('composing', remoteJid);
-                await sock.sendMessage(remoteJid, { text: `🔍 *Mencari ${result.type === 'news' ? 'berita' : 'info'} tentang:* ${result.query}...` });
-                const results = result.type === 'news'
-                    ? await searchNews(result.query)
-                    : await searchWeb(result.query);
-                await sock.sendMessage(remoteJid, { text: formatSearchResults(results) });
-                return;
-            }
-        }
+        // ==================== SEARCH KEYWORD DETECTION (DISABLED - AI pakai web_search tool) ====================
+        // if (!command && (isPrivateChat || (isGroup && isMentioned))) {
+        //     const nlMatch = findSkillByNaturalLanguage(text);
+        //     if (nlMatch && nlMatch.skill.name === 'search') {
+        //         const result = nlMatch.result;
+        //         await sock.sendPresenceUpdate('composing', remoteJid);
+        //         await sock.sendMessage(remoteJid, { text: `🔍 *Mencari ${result.type === 'news' ? 'berita' : 'info'} tentang:* ${result.query}...` });
+        //         const results = result.type === 'news'
+        //             ? await searchNews(result.query)
+        //             : await searchWeb(result.query);
+        //         await sock.sendMessage(remoteJid, { text: formatSearchResults(results) });
+        //         return;
+        //     }
+        // }
 
         // ==================== RATE LIMIT CHECK ====================
         if (!isOwner && (isPrivateChat || (isGroup && isMentioned))) {

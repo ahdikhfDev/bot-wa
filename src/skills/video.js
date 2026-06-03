@@ -21,7 +21,7 @@ export default {
         if (args.length === 0) {
             const usage = isKonten
                 ? `📱 *Konten Cepet*\nBuat konten singkat (gambar + suara natural) dalam hitungan detik.\n\n*Cara pakai:*\n/konten [style] [topik]\n/konten fakta kenapa langit biru\n/konten quotes motivasi hidup\n/konten edukasi cara kerja ChatGPT\n/konten story kisah inspiratif\n\n*Style:* fakta, quotes, edukasi, story`
-                : `🎬 *Buat Video*\nBuat video otomatis dengan gambar AI + suara natural + subtitle.\n\n*Cara pakai:*\n/buatvideo [style] [topik]\n/buatvideo edukasi cara kerja AI\n/buatvideo fakta unik tentang kucing\n/buatvideo story legenda Indonesia\n/buatvideo quotes kata bijak hari ini\n/buatvideo roast [nama orang]\n\n*Style:* edukasi, fakta, story, quotes\n*Roasting:* /buatvideo roast [target]`;
+                : `🎬 *Buat Video*\nBuat video otomatis dengan video Pexels + suara natural + subtitle.\n\n*Cara pakai:*\n/buatvideo [style] [topik]\n/buatvideo edukasi cara kerja AI\n/buatvideo fakta unik tentang kucing\n/buatvideo story legenda Indonesia\n/buatvideo quotes kata bijak hari ini\n/buatvideo roast [nama orang]\n\n*Style:* edukasi, fakta, story, quotes\n*Roasting:* /buatvideo roast [target]`;
 
             await sock.sendMessage(remoteJid, { text: usage });
             return;

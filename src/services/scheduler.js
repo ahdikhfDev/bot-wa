@@ -49,9 +49,11 @@ export function addJob(name, chatId, hour, minute, actionType, actionParams = {}
 export function removeJob(name) {
     const db = getDb();
     if (!db) return false;
+    const existing = db.exec('SELECT name FROM cron_jobs WHERE name = ?', [name]);
+    if (!existing.length || !existing[0].values.length) return false;
     db.run('DELETE FROM cron_jobs WHERE name = ?', [name]);
     saveDb();
-    return db.getRowsModified() > 0;
+    return true;
 }
 
 export function getJob(name) {
@@ -274,13 +276,8 @@ const actionHandlers = {
     async it_digest(sock, job) {
         if (!sock) return;
         try {
-            const { getModerationConfig } = await import('./autoModerator.js');
             const { fetchMorningDigest, formatMorningDigest } = await import('./itContentAggregator.js');
-            
-            // Check if main group has an announcement group configured
-            const cfg = getModerationConfig(job.chat_id);
-            const targetJid = (cfg && cfg.announcementGroupJid) || job.chat_id;
-            
+
             const digest = await fetchMorningDigest({
                 githubLang: '',
                 devToTag: 'programming',
@@ -288,7 +285,7 @@ const actionHandlers = {
                 includeArxiv: true,
             });
             const formatted = formatMorningDigest(digest);
-            await sock.sendMessage(targetJid, { text: formatted.substring(0, 4000) });
+            await sock.sendMessage(job.chat_id, { text: formatted.substring(0, 4000) });
         } catch (err) {
             logError('Scheduler it_digest', err);
         }
