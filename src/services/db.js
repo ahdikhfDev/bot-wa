@@ -271,37 +271,39 @@ function autoWhitelistOwners() {
 
 
 
-function importOrphanStocks() {
+async function importOrphanStocks() {
     if (!db) return;
     try {
-        var videoDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../stock-videos");
-        if (!fs.existsSync(videoDir)) return;
+        const videoDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../stock-videos");
+        const dirExists = await fs.promises.access(videoDir).then(() => true).catch(() => false);
+        if (!dirExists) return;
 
-        var files = fs.readdirSync(videoDir).filter(function(f) { return f.endsWith(".mp4") && !f.startsWith("."); });
+        const allFiles = await fs.promises.readdir(videoDir);
+        const files = allFiles.filter(f => f.endsWith('.mp4') && !f.startsWith('.'));
         if (files.length === 0) return;
 
-        var existingVideos = {};
-        var r = db.exec("SELECT video_path FROM stock");
+        const existingVideos = {};
+        const r = db.exec("SELECT video_path FROM stock");
         if (r.length && r[0].values) {
-            for (var i = 0; i < r[0].values.length; i++) {
+            for (let i = 0; i < r[0].values.length; i++) {
                 if (r[0].values[i][0]) existingVideos[path.basename(r[0].values[i][0])] = true;
             }
         }
 
-        var added = 0;
-        for (var i = 0; i < files.length; i++) {
-            var f = files[i];
+        let added = 0;
+        for (const f of files) {
             if (existingVideos[f]) continue;
-            var base = path.basename(f, ".mp4");
-            var match = base.match(/^(.+?)_[a-z0-9]{7,}$/);
-            var topicName = match ? match[1].replace(/_/g, " ").trim() : base.replace(/_/g, " ");
-            var videoPath = path.join(videoDir, f);
-            var thumbPath = path.join(videoDir, base + ".jpg");
-            var size = fs.statSync(videoPath).size;
-            var tags = JSON.stringify(["#" + topicName.replace(/\s+/g, ""), "#video", "#thirtybot"]);
+            const base = path.basename(f, '.mp4');
+            const match = base.match(/^(.+?)_[a-z0-9]{7,}$/);
+            const topicName = match ? match[1].replace(/_/g, ' ').trim() : base.replace(/_/g, ' ');
+            const videoPath = path.join(videoDir, f);
+            const thumbPath = path.join(videoDir, base + '.jpg');
+            const thumbExists = await fs.promises.access(thumbPath).then(() => true).catch(() => false);
+            const stat = await fs.promises.stat(videoPath);
+            const tags = JSON.stringify(["#" + topicName.replace(/\s+/g, ''), '#video', '#thirtybot']);
             db.run(
-                "INSERT INTO stock (topic, caption, tags, video_path, thumbnail_path, video_size, trend_source) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                [topicName, topicName, tags, videoPath, fs.existsSync(thumbPath) ? thumbPath : "", size, "auto_imported"]
+                'INSERT INTO stock (topic, caption, tags, video_path, thumbnail_path, video_size, trend_source) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [topicName, topicName, tags, videoPath, thumbExists ? thumbPath : '', stat.size, 'auto_imported']
             );
             added++;
         }

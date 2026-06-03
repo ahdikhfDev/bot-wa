@@ -76,7 +76,6 @@ export async function handleMessage(sock, msg) {
     try {
         let messageContent = getMessageText(msg);
         if (!msg.message) {
-            console.log('[DEBUG] Early return: !msg.message');
             return;
         }
 
@@ -202,9 +201,6 @@ export async function handleMessage(sock, msg) {
         const wlSender = isWhitelisted(senderJid);
         const isAuthorized = isOwner || wlRemote || wlSender;
 
-        if (command || isMentioned) {
-            console.log(`[AUTH] senderJid=${senderJid} senderNumber=${senderNumber} isOwner=${isOwner} wlRemote=${wlRemote} wlSender=${wlSender} isAuthorized=${isAuthorized}`);
-        }
         if (!isAuthorized) {
             if (command || isMentioned) {
                 await sock.sendMessage(remoteJid, { text: '⛔ *Akses Ditolak*\nMaaf, Anda tidak memiliki izin untuk menggunakan bot ini. Silakan hubungi Maha Raja Ahdi Khalida Fathir.' });
